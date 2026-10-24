@@ -1,5 +1,30 @@
 # HVACPulse: Streaming Telemetry, Learning and Mock Control
 
+[![ci](https://github.com/jerry98s/hvacpulse-streaming-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/jerry98s/hvacpulse-streaming-platform/actions/workflows/ci.yml)
+
+## Proof / Run Evidence
+
+| Signal | What to check |
+|---|---|
+| **CI** | The badge above. Every push to `main` runs Ruff, unit tests, Spark and Delta suites, dashboard render tests, a live Kafka-to-mock-control integration test, both Avro compatibility checks, and Terraform fmt/validate. |
+| **Tests** | `uv run pytest tests/unit -m unit` → **142 passed** locally; Spark, Delta, dashboard and Kafka suites run as separate CI jobs. |
+| **Idempotent writes** | `tests/delta/test_job_idempotency.py` retries and replays the quarantine, Gold history and restatement MERGEs and checks no row is duplicated. |
+| **Restatement** | Gold `OPEN → FINAL → RESTATED` with `metric_version` + `_content_hash`; a corrected window keeps prior versions in `gold_hvac_metrics_history`. |
+| **Safety gates** | A mock control decision is `BLOCKED` when any gate fails (e.g. `reason=MODEL_NOT_APPROVED`, `plan=null`); nothing actuates equipment. |
+| **Contracts** | `contracts/check_compatibility.py` enforces transitive backward compatibility across all retained Avro versions in CI. |
+
+**Verify it yourself** (three commands, no secrets needed):
+
+```powershell
+uv sync --group dev --group dashboard
+uv run pytest tests/unit -m unit
+.\scripts\local\run_local_stack.ps1 -Task all
+```
+
+The dashboard below reads the Delta tables directly over delta-rs (no Spark session):
+
+![Air-handler energy dashboard](docs/assets/dashboard-air-handler.png)
+
 ## Executive Summary
 
 HVACPulse collects HVAC telemetry, builds trustworthy streaming features, trains cooling-load models, and evaluates constrained control plans against a mock plant. Kafka and Delta Lake are the shared backbone; there is no separate offline pilot pipeline.
@@ -280,6 +305,55 @@ Column descriptions for every table live in `reference/semantic_model.yml` and a
 to Unity Catalog as column comments.
 
 <!-- END DATA DICTIONARY -->
+
+### Sample Data
+
+A local run writes the air-handler tables; the plant tables come from the plant
+loop (locally from a Delta test run). Seventeen tables hold rows. Three audit
+tables are empty until the pipeline emits their events: `late_corrections` and
+`metric_restatement_events` exist with zero rows in the demo run (all Gold
+windows were still `OPEN`, so nothing restated), and `recommendation_events` is
+only created when a recommendation is first revoked.
+
+| Table | Rows (demo) | Shape |
+|---|---|---|
+| `bronze_telemetry` | 2,000 | Kafka key, Avro bytes, topic/partition/offset, headers, payload_hash |
+| `silver_telemetry_history` | 1,710 | decoded reading + identity + measurements + Kafka lineage |
+| `silver_telemetry_current` | 1,710 | latest valid revision per logical event |
+| `quarantine_events` | 265 | parsed fields + `error_code` + payload hex |
+| `gold_hvac_metrics_current` | 707 | device x one-minute window metrics + status + version |
+| `gold_hvac_metrics_history` | 707 | same + `published_at`, `calculation_version` |
+| `gold_data_quality_scorecard` | 7 | device x five-minute ingest window quality counts |
+| `gold_sensor_freshness` | 5 | one row per device, staleness vs expected interval |
+| `gold_compliance` | 162 | device x five-minute event window violations |
+| `gold_equipment_health` | 5 | per-device inconsistency counts |
+| `gold_recommendations` | 3 | advisory suggestion, mode `ADVISORY` |
+| `silver_plant_snapshots` | 387 | plant scope + calibrated `values_json` |
+| `quarantine_plant_snapshots` | 1 | snapshot + `issues` |
+| `gold_plant_features` | 387 | weather/occupancy/production features + cooling target |
+| `plant_model_registry` | 1 | model artifact, gate results, lineage |
+| `gold_plant_predictions` | 2 | estimated cooling kW, purpose current-load |
+| `gold_plant_control_decisions` | 3 | decision state, shadow/simulate, never physical |
+
+Representative rows from the demo run (`C:\Temp\hvacpulse-local`, simulated
+2026-08-31):
+
+- `silver_telemetry_current`: `ahu-001` at `factory-kl-01`, zone 24.42 C,
+  supply 15.74 C, humidity 57.8 %, airflow 9,245 m3/h, power 15.41 kW, mode
+  `AUTO`, Kafka partition 3 offset 390.
+- `quarantine_events`: `device_id=ahu-999-unknown`, `error_code=
+  EQUIPMENT_UNKNOWN`, `parse_ok=true` (recorded, not dropped).
+- `gold_hvac_metrics_current`: `ahu-002`, window 13:18-13:19, 1 event, avg
+  13.06 kW, energy 0.018139 kWh, status `OPEN`, `metric_version=1`.
+- `gold_data_quality_scorecard`: `ahu-301`, 10:55-11:00 ingest window, 352
+  valid / 42 quarantined, quality_score 0.8934, `FAIL`.
+- `gold_recommendations`: `rec-981cc39a…`, `fcu-201`, `INCREASE_COOLING`,
+  mode `ADVISORY`, status `ACTIVE`.
+- `silver_plant_snapshots`: scope `demo-tenant/mock-factory/chiller-plant-1`,
+  `values_json` for `ch-1` with supply 6.0 C, return 11.0 C, flow 24.4 m3/h,
+  power 36.7 kW, loading 20.3 %.
+- `gold_plant_control_decisions`: `mode=simulate`, `state=BLOCKED`,
+  `reason=MODEL_NOT_APPROVED`, `plan=null` (gates failed; nothing actuated).
 
 ---
 
