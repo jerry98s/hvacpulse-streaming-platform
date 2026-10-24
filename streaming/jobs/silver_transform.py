@@ -58,7 +58,11 @@ def read_known_devices(csv_path: Path | str) -> set[str]:
 def _merge_quarantine(
     spark: SparkSession, settings: Settings, df: DataFrame, path: str
 ) -> None:
-    """Write each rejected Kafka record/reason once, including batch retries."""
+    """Write each rejected Kafka record/reason once, including batch retries.
+    
+    Key includes topic+partition+offset to prevent corrupt records at the same
+    offset in different partitions from colliding.
+    """
     key = ["kafka_topic", "kafka_partition", "kafka_offset", "error_code"]
     rows = df.dropDuplicates(key)
     if rows.limit(1).count() == 0:
@@ -105,21 +109,35 @@ def _merge_inserts(
     )
 
 
-def _rebuild_current(spark: SparkSession, settings: Settings) -> None:
+def _update_current(spark: SparkSession, settings: Settings, inserted: DataFrame) -> None:
+    """Update only affected logical IDs in current using revision-aware MERGE.
+    
+    Equal-revision conflicts are resolved deterministically by event_time,
+    then bronze_ingest_ts, then event_id (lexicographically).
+    """
+    affected_ids = inserted.select("logical_event_id").distinct()
     history = settings.read_delta(spark, settings.silver_history_path)
+    history_affected = history.join(affected_ids, "logical_event_id", "inner")
+    
     latest_first = Window.partitionBy("logical_event_id").orderBy(
         col("revision_number").desc(),
         col("event_time").desc(),
-        col("ingest_ts").desc(),
+        col("bronze_ingest_ts").desc(),
         col("event_id").desc(),
     )
-    current = history.withColumn("_rn", row_number().over(latest_first)).filter("_rn = 1").drop("_rn")
-    settings.write_delta(
-        current,
-        settings.silver_current_path,
-        mode="overwrite",
-        overwrite_schema=True,
-        partition_by=["ingest_date"],
+    updates = history_affected.withColumn("_rn", row_number().over(latest_first)).filter("_rn = 1").drop("_rn")
+    
+    if not settings.delta_exists(spark, settings.silver_current_path):
+        settings.write_delta(updates, settings.silver_current_path, partition_by=["ingest_date"])
+        return
+    
+    target = settings.delta_table(spark, settings.silver_current_path)
+    (
+        target.alias("t")
+        .merge(updates.alias("s"), "t.logical_event_id = s.logical_event_id")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
     )
 
 
@@ -159,9 +177,10 @@ def _process_microbatch(spark: SparkSession, settings: Settings, batch_df: DataF
     else:
         inserts = candidates
 
-    _merge_inserts(spark, settings, silver_projection(inserts), settings.silver_history_path)
-    if settings.delta_exists(spark, settings.silver_history_path):
-        _rebuild_current(spark, settings)
+    projected_inserts = silver_projection(inserts)
+    _merge_inserts(spark, settings, projected_inserts, settings.silver_history_path)
+    if projected_inserts.limit(1).count() > 0:
+        _update_current(spark, settings, projected_inserts)
 
     batch_df.unpersist()
 
@@ -181,7 +200,16 @@ def run(settings: Settings, *, once: bool = True) -> None:
     deduped = (
         validated.withColumn(
             "_dedup_id",
-            coalesce(col("event_id"), concat(lit("offset-"), col("kafka_offset").cast("string"))),
+            coalesce(
+                col("event_id"),
+                concat(
+                    col("kafka_topic"),
+                    lit("-"),
+                    col("kafka_partition").cast("string"),
+                    lit("-"),
+                    col("kafka_offset").cast("string"),
+                ),
+            ),
         )
         .withWatermark("ingest_ts", settings.watermark)
         .dropDuplicatesWithinWatermark(["_dedup_id", "payload_hash"])

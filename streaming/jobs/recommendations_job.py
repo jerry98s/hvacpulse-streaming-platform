@@ -92,7 +92,7 @@ def _latest_device_rows(silver: DataFrame) -> DataFrame:
     """Select one deterministic latest reading per device for safety gates."""
     latest_first = Window.partitionBy("device_id").orderBy(
         col("event_time").desc(),
-        col("ingest_ts").desc(),
+        col("bronze_ingest_ts").desc(),
         col("kafka_partition").desc(),
         col("kafka_offset").desc(),
     )

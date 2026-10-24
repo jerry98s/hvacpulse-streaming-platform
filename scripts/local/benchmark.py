@@ -2,9 +2,12 @@
 
 Reads Bronze/Silver/Quarantine via delta-rs (no Spark) and reports:
   - source latency   (kafka_timestamp - event_time)
-  - processing latency (silver ingest_ts - kafka_timestamp)
-  - end-to-end latency (silver ingest_ts - event_time)
+  - bronze processing (bronze_ingest_ts - kafka_timestamp)
+  - silver processing (silver_commit_ts - bronze_ingest_ts)
+  - end-to-end latency (silver_commit_ts - event_time)
   - throughput estimate and quarantine rate
+
+All latencies measure wall-clock observability boundaries, not synthetic event time.
 
 Usage: python scripts/local/benchmark.py [--csv out.csv]
 """
@@ -54,17 +57,19 @@ def main() -> int:
 
     event_time = pd.to_datetime(silver["event_time"], utc=True)
     kafka_ts = pd.to_datetime(silver["kafka_timestamp"], utc=True)
-    ingest_ts = pd.to_datetime(silver["ingest_ts"], utc=True)
+    bronze_ts = pd.to_datetime(silver["bronze_ingest_ts"], utc=True)
+    silver_ts = pd.to_datetime(silver["silver_commit_ts"], utc=True)
 
     rows = {
         "source_latency_s": percentiles((kafka_ts - event_time).dt.total_seconds()),
-        "processing_latency_s": percentiles((ingest_ts - kafka_ts).dt.total_seconds()),
-        "end_to_end_latency_s": percentiles((ingest_ts - event_time).dt.total_seconds()),
+        "bronze_processing_s": percentiles((bronze_ts - kafka_ts).dt.total_seconds()),
+        "silver_processing_s": percentiles((silver_ts - bronze_ts).dt.total_seconds()),
+        "end_to_end_latency_s": percentiles((silver_ts - event_time).dt.total_seconds()),
     }
     report = pd.DataFrame(rows).T
     report.index.name = "metric"
 
-    span_s = max((ingest_ts.max() - event_time.min()).total_seconds(), 1.0)
+    span_s = max((silver_ts.max() - event_time.min()).total_seconds(), 1.0)
     received = len(silver) + len(quarantine)
     summary = {
         "silver_rows": len(silver),

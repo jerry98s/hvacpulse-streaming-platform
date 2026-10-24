@@ -121,7 +121,7 @@ def test_quality_scorecard_keeps_quarantine_only_windows(spark, tmp_path):
     observed_at = datetime(2026, 8, 26, 10, 1, tzinfo=timezone.utc)
     valid = spark.createDataFrame(
         [("site-valid", "ahu-valid", observed_at, None, None, None)],
-        "site_id string, device_id string, ingest_ts timestamp, "
+        "site_id string, device_id string, bronze_ingest_ts timestamp, "
         "zone_temp_c double, power_kw double, relative_humidity_pct double",
     )
     rejected = spark.createDataFrame(
@@ -143,7 +143,7 @@ def test_latest_device_row_uses_event_time_then_transport_order(spark):
             ("ahu-1", datetime(2026, 8, 26, 10, 0), datetime(2026, 8, 26, 10, 0), 0, 1, 1.0),
             ("ahu-1", datetime(2026, 8, 26, 10, 1), datetime(2026, 8, 26, 10, 1), 0, 2, 2.0),
         ],
-        "device_id string, event_time timestamp, ingest_ts timestamp, "
+        "device_id string, event_time timestamp, bronze_ingest_ts timestamp, "
         "kafka_partition int, kafka_offset long, power_kw double",
     )
     assert _latest_device_rows(rows).first().power_kw == 2.0
