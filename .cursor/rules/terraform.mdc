@@ -1,0 +1,27 @@
+---
+description: Minimal Azure Terraform layout, names, and commands
+globs: infra/terraform/**
+alwaysApply: false
+---
+
+# Terraform
+
+Scope: Event Hubs namespace, hub `hvac-telemetry`, schema group, ADLS Gen2.
+No wrapper script. From `infra/terraform/`:
+
+```powershell
+copy dev.tfvars.example terraform.tfvars
+terraform init
+terraform fmt -check
+terraform validate
+terraform plan
+terraform apply
+```
+
+CI uses `terraform fmt -check` and `terraform init -backend=false` plus
+`terraform validate`.
+
+`dev.tfvars.example`: prefix `hvacpulse`, location `southeastasia`,
+8 partitions, 7-day retention, tags `project=hvacpulse`, `environment=dev`.
+`terraform.tfvars` and state are gitignored. Outputs the bundle needs are
+`eventhub_kafka_endpoint` and `eventhub_name`.

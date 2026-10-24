@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and adjust.
+prefix                        = "hvacpulse"
+location                      = "southeastasia"
+eventhub_partition_count      = 8
+eventhub_message_retention_days = 7
+tags = {
+  project     = "hvacpulse"
+  environment = "dev"
+}

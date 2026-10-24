@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Unit tests (no Spark)
+        run: uv run pytest tests/unit -m unit
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dashboard and test dependencies
+        run: uv sync --group dev --group dashboard
+      - name: Render Delta-backed charts, tables and filter reruns
+        run: uv run --group dashboard pytest tests/dashboard -m dashboard
+
+  spark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Spark transform tests
+        run: uv run pytest tests/spark -m spark
+        env:
+          SPARK_LOCAL_IP: 127.0.0.1
+      - name: Delta idempotency tests
+        run: uv run pytest tests/delta -m delta
+        env:
+          SPARK_LOCAL_IP: 127.0.0.1
+
+  kafka:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Start the existing local Kafka stack
+        run: docker compose -f infra/docker/compose/docker-compose.yml up -d --wait --wait-timeout 120
+      - name: Kafka to features, training and mock control
+        run: uv run pytest tests/integration/test_plant_kafka.py -m integration
+        env:
+          HVACPULSE_TEST_KAFKA: "1"
+      - name: Stop test broker
+        if: always()
+        run: docker compose -f infra/docker/compose/docker-compose.yml down
+
+  schema-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check Avro contracts are backward compatible across all versions
+        run: |
+          python contracts/check_compatibility.py contracts/avro
+          python contracts/check_compatibility.py contracts/plant
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Format check
+        run: terraform -chdir=infra/terraform fmt -check
+      - name: Validate
+        run: |
+          terraform -chdir=infra/terraform init -backend=false
+          terraform -chdir=infra/terraform validate

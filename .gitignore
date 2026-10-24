@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local pipeline state (Delta tables, checkpoints, checkpoints, data)
+.local/
+
+# Terraform
+*.tfstate*
+.terraform/
+terraform.tfvars
+*.backend.hcl
+!*.tfvars.example
+!*.backend.hcl.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets
+.env
+*.pem
+
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Databricks bundle deploy state
+.databricks/
+
+# Internal assessment, kept local
+docs/axross-gap-analysis.md

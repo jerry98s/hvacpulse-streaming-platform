@@ -1,0 +1,17 @@
+---
+description: Quarantine corrupt telemetry; keep alarming measurements as signals
+globs: quality/**
+alwaysApply: false
+---
+
+# Quality
+
+`quality/rules.py` holds hard validity checks. Failures are quarantined with a
+typed error code (`SCHEMA_INVALID`, `TEMPERATURE_PHYSICALLY_IMPOSSIBLE`,
+`IDEMPOTENCY_CONFLICT`, and the other codes in that module).
+
+`quality/signals.py` holds operational signals: stale sensors, sequence gaps,
+environmental-limit violations, equipment-state inconsistencies. Those rows
+stay in Silver.
+
+Do not move a signal check into a quarantine error code.

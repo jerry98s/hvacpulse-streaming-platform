@@ -1,0 +1,46 @@
+---
+description: HVACPulse commands, targets, and environment traps for every chat
+alwaysApply: true
+---
+
+# HVACPulse
+
+Kafka → Spark Structured Streaming → Delta medallion, plus a mock plant loop.
+Advisory/mock control only. Python ≥3.10 (CI 3.11), uv, PySpark 3.5.5,
+delta-spark 3.2.1, Kafka 3.9.1. Java 17 for Spark.
+
+## Commands
+
+```powershell
+uv sync --group dev --group dashboard
+uv run ruff check .
+uv run pytest tests/unit -m unit
+.\.venv\Scripts\python.exe contracts\check_compatibility.py contracts\avro
+.\.venv\Scripts\python.exe contracts\check_compatibility.py contracts\plant
+.\scripts\local\run_local_stack.ps1 -Task all
+.\scripts\local\run_local_stack.ps1 -Task plant-all
+```
+
+Spark, Delta, dashboard, and bundle commands stay in the scoped rules.
+
+## Profiles and targets
+
+- Local Delta: `HVACPULSE_DATA_ROOT` (default `.local/`).
+- Kafka topic `hvac.telemetry` at `127.0.0.1:19092` (container `hvacpulse-kafka`).
+- Bundle targets: `dev` (default) and `prod`. UC defaults: catalog
+  `hvacpulse_dev`, schema `streaming`.
+- Two profiles, one topic: air-handler Avro (`contracts/avro/`) and plant
+  snapshots (`contracts/plant/`, header `event_type=plant_snapshot`).
+
+## Do not commit
+
+`.local/`, `terraform.tfvars`, `*.tfstate*`, `.env`, `*.pem`, `spark-warehouse/`.
+Limits live in `reference/`, not in code. No dbt, Soda, or Great Expectations.
+
+## Traps
+
+- Do not set `SPARK_LOCAL_IP` on Windows. `create_spark` pops it; CI sets it
+  only on Linux. OneDrive locks Delta in the repo — point
+  `HVACPULSE_DATA_ROOT` outside OneDrive (example `C:\Temp\hvacpulse-local`).
+- Event Hub name is `hvac-telemetry`. The local topic is `hvac.telemetry`.
+- `create_spark` returns an active Databricks session unchanged.

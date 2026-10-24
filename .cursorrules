@@ -1,0 +1,13 @@
+HVACPulse: Kafka → Spark Structured Streaming → Delta Lake medallion platform
+with a mock plant learn/control loop. Advisory/mock control only — never
+physical actuation.
+
+Authoritative guidance lives in:
+- .cursor/rules/ (project-context, python, streaming, plant, contracts, quality, dashboard, terraform, databricks)
+- AGENTS.md (repo overview, common tasks, do-not list)
+
+Key points: Python 3.10+ / PySpark 3.5.5 / delta-spark 3.2.1; Ruff line-length
+110 with single-line imports; config via HVACPULSE_* env vars; local Kafka at
+127.0.0.1:19092; Delta autoMerge disabled; additive-only Avro changes; Bronze
+immutable; quarantine corrupt data, never alarming data; one checkpoint per
+query; run everything through scripts/local/run_local_stack.ps1.

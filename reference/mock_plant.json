@@ -1,0 +1,47 @@
+{
+  "scope": {"tenant_id": "demo-tenant", "site_id": "mock-factory", "plant_id": "chiller-plant-1"},
+  "version": "mock-plant-v1",
+  "equipment": [
+    {"equipment_id": "ch-1", "kind": "chiller", "capacity_kw": 700, "idle_power_kw": 16, "linear_kw_per_kw": 0.13, "quadratic_kw_per_kw2": 0.00006},
+    {"equipment_id": "ch-2", "kind": "chiller", "capacity_kw": 700, "idle_power_kw": 22, "linear_kw_per_kw": 0.16, "quadratic_kw_per_kw2": 0.00008},
+    {"equipment_id": "tower-1", "kind": "cooling_tower"},
+    {"equipment_id": "chw-pump-1", "kind": "chw_pump"},
+    {"equipment_id": "cw-pump-1", "kind": "cw_pump"},
+    {"equipment_id": "vfd-1", "kind": "vfd"},
+    {"equipment_id": "process-1", "kind": "process"}
+  ],
+  "connections": [
+    ["ch-1", "chw-pump-1", "chw"], ["ch-2", "chw-pump-1", "chw"],
+    ["chw-pump-1", "process-1", "chw"], ["process-1", "ch-1", "chw"],
+    ["process-1", "ch-2", "chw"], ["tower-1", "cw-pump-1", "cw"],
+    ["cw-pump-1", "ch-1", "cw"], ["cw-pump-1", "ch-2", "cw"],
+    ["ch-1", "tower-1", "cw"], ["ch-2", "tower-1", "cw"],
+    ["vfd-1", "chw-pump-1", "drive"]
+  ],
+  "tags": [
+    {"source_tag": "CH1.SUPPLY", "equipment_id": "ch-1", "metric": "supply_temp_c", "unit": "C", "minimum": 3, "maximum": 15, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH1.RETURN", "equipment_id": "ch-1", "metric": "return_temp_c", "unit": "C", "minimum": 3, "maximum": 25, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH1.FLOW", "equipment_id": "ch-1", "metric": "flow_m3h", "unit": "m3/h", "minimum": 0, "maximum": 140, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH1.KW", "equipment_id": "ch-1", "metric": "power_kw", "unit": "kW", "minimum": 0, "maximum": 250, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH1.LOAD", "equipment_id": "ch-1", "metric": "loading_pct", "unit": "%", "minimum": 0, "maximum": 100, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH1.RUN", "equipment_id": "ch-1", "metric": "running", "unit": "bool", "minimum": 0, "maximum": 1, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH2.SUPPLY", "equipment_id": "ch-2", "metric": "supply_temp_c", "unit": "F", "minimum": 3, "maximum": 15, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH2.RETURN", "equipment_id": "ch-2", "metric": "return_temp_c", "unit": "C", "minimum": 3, "maximum": 25, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH2.FLOW", "equipment_id": "ch-2", "metric": "flow_m3h", "unit": "l/s", "minimum": 0, "maximum": 140, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH2.KW", "equipment_id": "ch-2", "metric": "power_kw", "unit": "W", "minimum": 0, "maximum": 250, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH2.LOAD", "equipment_id": "ch-2", "metric": "loading_pct", "unit": "%", "minimum": 0, "maximum": 100, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CH2.RUN", "equipment_id": "ch-2", "metric": "running", "unit": "bool", "minimum": 0, "maximum": 1, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "TOWER.KW", "equipment_id": "tower-1", "metric": "power_kw", "unit": "kW", "minimum": 0, "maximum": 100, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "TOWER.RUN", "equipment_id": "tower-1", "metric": "running", "unit": "bool", "minimum": 0, "maximum": 1, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CHWP.KW", "equipment_id": "chw-pump-1", "metric": "power_kw", "unit": "kW", "minimum": 0, "maximum": 50, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CHWP.DP", "equipment_id": "chw-pump-1", "metric": "differential_pressure_kpa", "unit": "Pa", "minimum": 0, "maximum": 200, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "CWP.KW", "equipment_id": "cw-pump-1", "metric": "power_kw", "unit": "kW", "minimum": 0, "maximum": 50, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "VFD.SPEED", "equipment_id": "vfd-1", "metric": "speed_pct", "unit": "ratio", "minimum": 0, "maximum": 100, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "PROCESS.OAT", "equipment_id": "process-1", "metric": "outdoor_temp_c", "unit": "C", "minimum": -10, "maximum": 50, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "PROCESS.RH", "equipment_id": "process-1", "metric": "humidity_pct", "unit": "%", "minimum": 0, "maximum": 100, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "PROCESS.WB", "equipment_id": "process-1", "metric": "wet_bulb_c", "unit": "C", "minimum": -10, "maximum": 40, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "PROCESS.OCC", "equipment_id": "process-1", "metric": "occupancy_pct", "unit": "%", "minimum": 0, "maximum": 100, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "PROCESS.HEAT", "equipment_id": "process-1", "metric": "heat_load_kw", "unit": "kW", "minimum": 0, "maximum": 1000, "calibration_due": "2030-01-01T00:00:00+00:00"},
+    {"source_tag": "PROCESS.PARTICLES", "equipment_id": "process-1", "metric": "particle_count_m3", "unit": "count/m3", "minimum": 0, "maximum": 10000, "calibration_due": "2030-01-01T00:00:00+00:00"}
+  ]
+}

@@ -1,0 +1,18 @@
+---
+description: Streamlit dashboard reads local Delta without Spark
+globs: dashboard/**
+alwaysApply: false
+---
+
+# Dashboard
+
+`dashboard/app.py` reads Delta with delta-rs. It does not start a Spark session.
+Data root is `HVACPULSE_DATA_ROOT` (default `.local/`), same as the jobs.
+
+```powershell
+uv sync --group dev --group dashboard
+.\scripts\local\run_local_stack.ps1 -Task dashboard
+uv run --group dashboard pytest tests/dashboard -m dashboard
+```
+
+Plant charts live in `dashboard/plant_view.py`.

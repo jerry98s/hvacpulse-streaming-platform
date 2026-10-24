@@ -1,0 +1,128 @@
+# Databricks Asset Bundle for HVACPulse cloud deployment.
+# Deploy: databricks bundle deploy -t dev   (requires `databricks auth login`)
+bundle:
+  name: hvacpulse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for HVACPulse tables
+    default: hvacpulse_dev
+  schema:
+    description: Unity Catalog schema (database) for HVACPulse tables
+    default: streaming
+  eventhubs_bootstrap:
+    description: Full Event Hubs Kafka bootstrap host and port
+  eventhubs_connection_secret:
+    description: Databricks secret scope/key holding the Event Hubs connection string
+
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+sync:
+  include:
+    - contracts/**
+    - quality/**
+    - reference/**
+    - streaming/**
+    - plant/**
+    - ingestion/**
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
+
+resources:
+  pipelines:
+    hvacpulse_pipeline:
+      name: ${bundle.name}-pipeline-${bundle.target}
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      libraries:
+        - file:
+            path: ./databricks/pipeline/lakeflow_pipeline.py
+      configuration:
+        bundle.sourcePath: ${workspace.file_path}
+        hvacpulse.eventhubs_bootstrap: ${var.eventhubs_bootstrap}
+        hvacpulse.eventhubs_secret: ${var.eventhubs_connection_secret}
+        hvacpulse.topic: hvac.telemetry
+
+  jobs:
+    hvacpulse_batch:
+      name: ${bundle.name}-batch-${bundle.target}
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: refresh_pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.hvacpulse_pipeline.id}
+        - task_key: silver
+          depends_on:
+            - task_key: refresh_pipeline
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_silver.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+        - task_key: plant_features_and_shadow_control
+          depends_on:
+            - task_key: refresh_pipeline
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_plant.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+              action: refresh
+        - task_key: gold_metrics
+          depends_on:
+            - task_key: silver
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_gold_metrics.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+        - task_key: quality_metrics
+          depends_on:
+            - task_key: gold_metrics
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_quality_metrics.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+        - task_key: recommendations
+          depends_on:
+            - task_key: quality_metrics
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_recommendations.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+        - task_key: reconciliation
+          depends_on:
+            - task_key: recommendations
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_reconciliation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+        - task_key: semantic_layer
+          depends_on:
+            - task_key: reconciliation
+            - task_key: plant_features_and_shadow_control
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_semantic_layer.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+      schedule:
+        quartz_cron_expression: 0 */5 * * * ?
+        timezone_id: UTC

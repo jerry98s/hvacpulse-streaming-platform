@@ -1,0 +1,21 @@
+---
+description: Avro families and the compatibility checker
+globs: contracts/**
+alwaysApply: false
+---
+
+# Avro contracts
+
+Two families, checked separately:
+
+- `contracts/avro/` — `hvac_telemetry_v1.avsc`, `hvac_telemetry_v2.avsc`
+- `contracts/plant/` — `plant_snapshot_v1.avsc`
+
+```powershell
+.\.venv\Scripts\python.exe contracts\check_compatibility.py contracts\avro
+.\.venv\Scripts\python.exe contracts\check_compatibility.py contracts\plant
+```
+
+CI job `schema-compat` runs both. New fields are nullable with a default.
+`check_compatibility.py` enforces backward compatibility against every retained
+version. Do not change or remove an existing field.

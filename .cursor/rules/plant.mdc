@@ -1,0 +1,29 @@
+---
+description: Mock plant config, training gates, and local plant commands
+globs: plant/**,ingestion/plant_*.py,reference/mock_plant.json
+alwaysApply: false
+---
+
+# Mock plant
+
+Config file: `reference/mock_plant.json` (`HVACPULSE_PLANT_CONFIG`). Scope is
+`demo-tenant` / `mock-factory` / `chiller-plant-1`, version `mock-plant-v1`.
+Tag limits and units stay in that file.
+
+Table names and snapshot grain are in the streaming rule. Do not restate them.
+
+```powershell
+.\scripts\local\run_local_stack.ps1 -Task plant-all
+.\scripts\local\run_local_stack.ps1 -Task plant-cycle -SimulateControl
+python -m streaming.jobs.plant_pipeline bootstrap --count 2000
+python -m streaming.jobs.plant_pipeline cycle
+python -m streaming.jobs.plant_learning train
+```
+
+`-SimulateControl` / `--simulate` only ACKs the mock plant. Default is shadow.
+Cloud `run_plant.py` rejects simulation.
+
+Training needs ≥96 clean snapshots spanning two days. Approval is untouched-test
+CVRMSE ≤ 0.15 and RMSE better than the constant-last-load baseline
+(`plant/learning.py`). Do not loosen freshness, model age, interlocks, or
+dwell gates to make a demo pass. Runbook: `docs/runbooks/plant-pipeline.md`.

@@ -1,0 +1,31 @@
+---
+description: Ruff, pytest markers, and HVACPULSE config for Python files
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python
+
+Ruff (`pyproject.toml`): line length 110, target `py310`, rules `E,F,I,UP,B,SIM`
+(E501 ignored), isort `force-single-line`. One import per line. Modules start
+with `from __future__ import annotations`.
+
+Config goes through `streaming.config.load_settings()` and `HVACPULSE_*`:
+`KAFKA_BOOTSTRAP`, `TOPIC`, `DATA_ROOT`, `CHECKPOINT_ROOT`, `PLANT_CONFIG`,
+`CATALOG`, `SCHEMA`, `WATERMARK`, `STARTING_OFFSETS`,
+`MAX_OFFSETS_PER_TRIGGER`. Do not hardcode brokers, paths, or secrets.
+
+Producer settings already in `ingestion/producer.py`: `acks="all"`,
+`retries=10`, `compression_type="lz4"`.
+
+## Pytest markers (same split as CI)
+
+- `unit` — `uv run pytest tests/unit -m unit` (no Spark, Kafka, or Docker)
+- `spark` — `uv run pytest tests/spark -m spark` (no Delta jars)
+- `delta` — `uv run pytest tests/delta -m delta`
+- `dashboard` — `uv run --group dashboard pytest tests/dashboard -m dashboard`
+- `integration` — set `HVACPULSE_TEST_KAFKA=1` first;
+  `uv run pytest tests/integration/test_plant_kafka.py -m integration`
+  (own topic only)
+
+Fixtures: `tests/unit/conftest.py`. DataFrame equality: chispa.

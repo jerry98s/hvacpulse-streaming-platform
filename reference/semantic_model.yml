@@ -1,0 +1,466 @@
+# HVACPulse semantic model: the single source for table/column documentation,
+# Unity Catalog comments and tags, and Databricks metric views.
+# Apply: python -m streaming.jobs.semantic_layer   (validates locally; applies on Unity Catalog)
+# README data dictionary: python -m streaming.semantic --write-readme
+version: 1
+owner: hvacpulse-data-platform
+
+shared:
+  kafka_lineage: &kafka_lineage
+    payload_hash: SHA-256 of the raw Avro payload; identical retries share it.
+    kafka_topic: Kafka topic the record was read from.
+    kafka_partition: Kafka partition of the source record.
+    kafka_offset: Kafka offset of the source record; with topic and partition it locates the exact message.
+    kafka_timestamp: Broker append time of the source record (UTC).
+    ingest_ts: Time Spark ingested the record into Bronze (UTC); drives the dedup watermark.
+    ingest_date: Partition column, the UTC date of ingest_ts.
+
+  telemetry: &telemetry
+    event_id: Physical event identity from the device gateway; unique per message revision.
+    logical_event_id: Stable identity of a reading, shared by every revision of it.
+    revision_number: Revision of the logical reading, starting at 1; corrections increment it.
+    supersedes_event_id: event_id this revision replaces; null for the first revision.
+    schema_id: Avro schema identifier from the payload.
+    schema_version: Avro telemetry schema version (1 or 2).
+    firmware_version: Device firmware version that produced the reading.
+    gateway_id: Gateway that forwarded the reading.
+    device_id: Equipment identifier; joins to reference/equipment_master.csv.
+    boot_id: Device boot session; sequence_number restarts per boot.
+    sequence_number: Monotonic message counter within a boot session.
+    site_id: Facility identifier.
+    zone_id: Conditioned zone served by the equipment.
+    supply_air_temp_c: Supply air temperature in degrees Celsius.
+    return_air_temp_c: Return air temperature in degrees Celsius.
+    zone_temp_c: Zone air temperature in degrees Celsius.
+    relative_humidity_pct: Zone relative humidity in percent.
+    airflow_m3h: Air volume flow in cubic metres per hour.
+    static_pressure_pa: Duct static pressure in pascals.
+    fan_speed_pct: Fan speed command in percent.
+    chilled_water_valve_pct: Chilled water valve position in percent open.
+    power_kw: Instantaneous electrical power in kilowatts.
+    co2_ppm: Zone CO2 concentration in ppm; null for schema v1 payloads.
+    mode: Operating mode reported by the controller.
+    temperature_setpoint_c: Active zone temperature setpoint in degrees Celsius.
+    equipment_running: True when the equipment reports it is running.
+
+  plant_snapshot: &plant_snapshot
+    event_id: Snapshot identity from the mock plant producer.
+    scope: Tenant, site and plant identifiers joined into one scope key.
+    config_version: Plant configuration version from reference/mock_plant.json.
+    captured_at: Snapshot capture time (ISO-8601 UTC).
+    available_at: Earliest time the snapshot could be used; prevents future data leaking into training.
+    synthetic: True for simulator-generated snapshots.
+    eligible: True when the snapshot passed completeness and freshness checks for features.
+    issues: Comma-separated validation issues; empty when clean.
+    completeness: Fraction of mapped tags present and fresh, from 0 to 1.
+    values_json: Calibrated tag values as JSON, keyed by equipment metric.
+    operating: True when the plant reported it was operating.
+    kafka_topic: Kafka topic the record was read from.
+    kafka_partition: Kafka partition of the source record.
+    kafka_offset: Kafka offset of the source record.
+    payload_hash: SHA-256 of the raw Avro payload.
+    row_id: Deterministic row identity used for idempotent merges.
+
+tables:
+  bronze_telemetry:
+    layer: bronze
+    domain: shared
+    managed_by: lakeflow
+    description: Raw Kafka or Event Hubs records for both telemetry profiles, append-only and immutable.
+    grain: one row per Kafka record
+    keys: [topic, partition, offset]
+    columns:
+      kafka_key: Kafka message key bytes.
+      value: Raw Avro payload bytes.
+      topic: Kafka topic.
+      partition: Kafka partition.
+      offset: Kafka offset within the partition.
+      kafka_timestamp: Broker append time (UTC).
+      headers: Kafka headers, including schema_version and event_type.
+      ingest_ts: Time Spark ingested the record (UTC).
+      ingest_date:
+        description: Partition column, the UTC date of ingest_ts. Local only; the cloud table clusters by ingest_ts instead.
+        optional: true
+      payload_hash: SHA-256 of the raw payload.
+      wire_schema_version: schema_version header value used to choose the Avro reader schema.
+
+  silver_telemetry_history:
+    layer: silver
+    domain: hvac
+    description: Validated air-handler readings, every revision kept.
+    grain: one row per event_id
+    keys: [event_id]
+    columns:
+      <<: [*telemetry, *kafka_lineage]
+      event_time: Equipment snapshot time (UTC).
+
+  silver_telemetry_current:
+    layer: silver
+    domain: hvac
+    description: Latest valid revision of each logical reading, rebuilt from history.
+    grain: one row per logical_event_id
+    keys: [logical_event_id]
+    columns:
+      <<: [*telemetry, *kafka_lineage]
+      event_time: Equipment snapshot time (UTC).
+
+  quarantine_events:
+    layer: quarantine
+    domain: hvac
+    description: Corrupt or unprocessable air-handler records with a typed error code. Alarming but valid data is never quarantined.
+    grain: one row per rejected Kafka record
+    keys: [_dedup_id, payload_hash]
+    columns:
+      <<: [*telemetry, *kafka_lineage]
+      event_time_str: Event time exactly as received, kept when it cannot be parsed.
+      event_time: Parsed event time (UTC); null when unparseable.
+      wire_schema_version: schema_version header value from Kafka.
+      payload_hex: Raw payload as hex, for forensic replay.
+      parse_ok: False when the Avro payload could not be decoded.
+      error_code: Quarantine reason from quality/rules.py, such as SCHEMA_INVALID or IDEMPOTENCY_CONFLICT.
+      _dedup_id: event_id, or a Kafka-offset key when event_id is missing; quarantine merge key.
+
+  gold_hvac_metrics_current:
+    layer: gold
+    domain: hvac
+    description: Latest published one-minute metrics per device. Customer reporting uses FINAL and RESTATED windows.
+    grain: one row per site_id, device_id and one-minute window_start
+    keys: [site_id, device_id, window_start]
+    columns: &gold_metrics
+      site_id: Facility identifier.
+      device_id: Equipment identifier.
+      window_start: Window start (UTC, inclusive).
+      window_end: Window end (UTC, exclusive).
+      window_date: Partition column, the UTC date of window_start.
+      event_count: Valid current readings in the window.
+      avg_power_kw: Mean instantaneous power in kilowatts.
+      max_power_kw: Peak instantaneous power in kilowatts.
+      avg_zone_temp_c: Mean zone temperature in degrees Celsius.
+      avg_humidity_pct: Mean relative humidity in percent.
+      energy_kwh: Energy in kWh, the sum of power_kw times the device expected report interval, divided by 3600, rounded to 6 decimals.
+      window_status: OPEN while the window can still change, FINAL ten minutes after it closes, RESTATED when a FINAL window changed.
+      _content_hash: SHA-256 of the metric values; a change creates a new metric_version.
+      metric_version: Publication version of the window, starting at 1.
+      restated_at: Time the window was last restated; null if never restated.
+
+  gold_hvac_metrics_history:
+    layer: gold
+    domain: hvac
+    description: Every published version of every one-minute metric window, append-only, so past reports can be reproduced.
+    grain: one row per site_id, device_id, window_start and metric_version
+    keys: [site_id, device_id, window_start, metric_version]
+    columns:
+      <<: *gold_metrics
+      published_at: Time this version was published.
+      calculation_version: Version of the metric formulas that produced the row, such as gold-v2.
+
+  gold_data_quality_scorecard:
+    layer: gold
+    domain: quality
+    description: Data quality per device and five-minute ingest window, valid versus quarantined records and null rates.
+    grain: one row per site_id, device_id and five-minute window_start (ingest time)
+    keys: [site_id, device_id, window_start]
+    columns:
+      site_id: Facility identifier.
+      device_id: Equipment identifier.
+      window_start: Window start by ingest time (UTC).
+      window_end: Window end by ingest time (UTC).
+      window_date: UTC date of window_start.
+      valid_events: Records that reached Silver.
+      quarantined_events: Records sent to quarantine.
+      received_events: valid_events plus quarantined_events.
+      distinct_error_codes: Number of different quarantine error codes.
+      idempotency_conflicts: Quarantined IDEMPOTENCY_CONFLICT records.
+      null_zone_temp_rate: Share of valid records with null zone_temp_c.
+      null_power_rate: Share of valid records with null power_kw.
+      null_humidity_rate: Share of valid records with null relative_humidity_pct.
+      quality_score: valid_events divided by received_events.
+      dq_status: FAIL when quality_score is below 0.9, WARN when any null rate exceeds 0.05, otherwise PASS.
+
+  gold_sensor_freshness:
+    layer: gold
+    domain: quality
+    description: Staleness of each device against its expected report interval.
+    grain: one row per device_id
+    keys: [device_id]
+    columns:
+      device_id: Equipment identifier.
+      site_id: Facility identifier.
+      last_event_time: Latest event_time in current Silver.
+      total_events: Current Silver readings for the device.
+      commissioning_status: Commissioning status from the equipment master.
+      expected_report_interval_sec: Expected seconds between readings, from the equipment master.
+      rated_power_kw: Rated electrical power from the equipment master.
+      temp_min_c: Lower zone temperature limit from the equipment master.
+      temp_max_c: Upper zone temperature limit from the equipment master.
+      humidity_min_pct: Lower humidity limit from the equipment master.
+      humidity_max_pct: Upper humidity limit from the equipment master.
+      age_seconds: Seconds between computed_at and last_event_time.
+      is_stale: True when age_seconds exceeds three expected report intervals.
+      computed_at: Time the job computed the row.
+
+  gold_compliance:
+    layer: gold
+    domain: compliance
+    description: Readings outside facility temperature and humidity limits per device and five-minute event window.
+    grain: one row per site_id, device_id and five-minute window_start (event time)
+    keys: [site_id, device_id, window_start]
+    columns:
+      site_id: Facility identifier.
+      device_id: Equipment identifier.
+      window_start: Window start by event time (UTC).
+      window_end: Window end by event time (UTC).
+      window_date: UTC date of window_start.
+      events: Current Silver readings in the window.
+      temp_violation_events: Readings with zone temperature outside the device limits.
+      humidity_violation_events: Readings with humidity outside the device limits.
+      avg_zone_temp_c: Mean zone temperature in degrees Celsius.
+      avg_humidity_pct: Mean relative humidity in percent.
+      violation_minutes: Minutes outside limits, each violating reading counted for its device report interval, summed across temperature and humidity.
+
+  gold_equipment_health:
+    layer: gold
+    domain: hvac
+    description: Cross-field inconsistencies per device over current Silver; valid readings that cannot all be true together.
+    grain: one row per site_id and device_id
+    keys: [site_id, device_id]
+    columns:
+      site_id: Facility identifier.
+      device_id: Equipment identifier.
+      events: Current Silver readings evaluated.
+      not_running_high_power_events: Readings that report not running while drawing over 30 percent of rated power.
+      fan_stopped_high_airflow_events: Readings with fan speed 0 and airflow above 1000 cubic metres per hour.
+      valve_closed_high_cooling_events: Readings with the chilled water valve closed and more than 2 degrees of cooling.
+      has_active_anomaly: True when any inconsistency count is above zero.
+      computed_at: Time the job computed the row.
+
+  gold_recommendations:
+    layer: gold
+    domain: advisory
+    description: Advisory optimisation suggestions that passed every safety gate. Never a control action.
+    grain: one row per recommendation_id
+    keys: [recommendation_id]
+    columns:
+      recommendation_id: Deterministic recommendation identity.
+      device_id: Equipment identifier.
+      site_id: Facility identifier.
+      window_start: Start of the five-minute window the recommendation is based on (UTC).
+      window_end: End of the window (UTC).
+      window_date: Partition column, the UTC date of window_start.
+      recommendation_type: Kind of suggestion, from streaming/recommendations.py.
+      rule_version: Version of the rule that produced it.
+      mode: Always ADVISORY.
+      rationale: Inputs and thresholds that justified the suggestion.
+      status: ACTIVE, or REVOKED after its source window was restated.
+      created_at: Time the recommendation was created.
+
+  recommendation_events:
+    layer: audit
+    domain: advisory
+    description: Compensating events that revoke recommendations whose source window was restated.
+    grain: one row per event_type and recommendation_id
+    keys: [event_type, recommendation_id]
+    columns:
+      event_type: RECOMMENDATION_REVOKED.
+      recommendation_id: Recommendation being revoked.
+      revoked_at: Revocation time (ISO-8601 UTC).
+      reason: Revocation reason, such as SOURCE_METRIC_RESTATED.
+      replacement_recommendation_id: Replacement recommendation, if the corrected data still passed every gate.
+
+  late_corrections:
+    layer: audit
+    domain: hvac
+    description: Revisions that arrived after the watermark and may affect FINAL Gold windows.
+    grain: one row per event_id and revision_number
+    keys: [event_id, revision_number]
+    columns:
+      event_id: Physical identity of the late revision.
+      device_id: Equipment identifier.
+      site_id: Facility identifier.
+      event_time: Equipment snapshot time (UTC).
+      ingest_ts: Ingest time (UTC), more than the watermark after event_time.
+      ingest_date: Partition column, the UTC date of ingest_ts.
+      revision_number: Revision number, greater than 1.
+      supersedes_event_id: event_id the revision replaces.
+      payload_hash: SHA-256 of the raw payload.
+      tracked_at: Time reconciliation recorded the row.
+
+  metric_restatement_events:
+    layer: audit
+    domain: hvac
+    description: Gold versions that restated a FINAL window; provisional OPEN updates are excluded.
+    grain: one row per device_id, window_start and metric_version
+    keys: [device_id, window_start, metric_version]
+    columns:
+      site_id: Facility identifier.
+      device_id: Equipment identifier.
+      window_start: Window start (UTC).
+      window_end: Window end (UTC).
+      window_date: Partition column, the UTC date of window_start.
+      metric_version: New metric version.
+      window_status: RESTATED.
+      restated_at: Time of the restatement.
+      content_hash: Content hash of the restated version.
+      event_type: METRIC_RESTATED.
+      tracked_at: Time reconciliation recorded the row.
+
+  silver_plant_snapshots:
+    layer: silver
+    domain: plant
+    description: Validated mock plant snapshots with calibrated tag values.
+    grain: one row per plant snapshot
+    keys: [row_id]
+    columns: *plant_snapshot
+
+  quarantine_plant_snapshots:
+    layer: quarantine
+    domain: plant
+    description: Mock plant snapshots that failed contract, scope or freshness checks.
+    grain: one row per rejected plant snapshot
+    keys: [row_id]
+    columns: *plant_snapshot
+
+  gold_plant_features:
+    layer: gold
+    domain: plant
+    description: Point-in-time plant features and targets for cooling-load models.
+    grain: one row per eligible plant snapshot
+    keys: [row_id]
+    columns:
+      row_id: Deterministic feature row identity.
+      scope: Tenant, site and plant scope key.
+      config_version: Plant configuration version.
+      captured_at: Snapshot capture time (ISO-8601 UTC).
+      available_at: Earliest time the features could be used.
+      synthetic: True for simulator-generated rows.
+      payload_hash: SHA-256 of the source payload.
+      feature_version: Version of the feature definitions.
+      outdoor_c: Outdoor dry-bulb temperature in degrees Celsius.
+      humidity_pct: Outdoor relative humidity in percent.
+      wet_bulb_c: Outdoor wet-bulb temperature in degrees Celsius.
+      occupancy_pct: Building occupancy in percent.
+      production_kw: Process production load in kilowatts.
+      operating: True when the plant was operating.
+      cooling_kw: Measured cooling load in kilowatts (model target).
+      power_kw: Measured plant electrical power in kilowatts.
+
+  plant_model_registry:
+    layer: ml
+    domain: plant
+    description: Trained mock plant models with gate results; only approved models may forecast.
+    grain: one row per model_id
+    keys: [model_id]
+    columns:
+      model_id: SHA-256 identity of the model artifact.
+      scope: Tenant, site and plant scope key.
+      config_version: Plant configuration version used for training.
+      feature_version: Feature definitions version used for training.
+      trained_at: Training time (ISO-8601 UTC).
+      holdout_through: End of the chronological holdout window.
+      approved: True when the model passed every gate.
+      artifact_json: Serialized model weights and normalization.
+      metrics_json: Holdout metrics and gate results.
+      lineage_json: Training window and source feature identities.
+
+  gold_plant_predictions:
+    layer: gold
+    domain: plant
+    description: Cooling-load estimates from approved models.
+    grain: one row per prediction_id
+    keys: [prediction_id]
+    columns:
+      prediction_id: Deterministic prediction identity.
+      scope: Tenant, site and plant scope key.
+      model_id: Model that produced the estimate.
+      feature_id: Feature row used as input.
+      captured_at: Capture time of the input snapshot.
+      issued_at: Time the prediction was issued.
+      estimated_cooling_kw: Estimated cooling load in kilowatts.
+      synthetic: True for simulator-generated inputs.
+      purpose: What the estimate is for; currently a current-load estimate, not a future forecast.
+
+  gold_plant_control_decisions:
+    layer: gold
+    domain: plant
+    description: Constrained control decisions for the mock plant; shadow by default, never physical actuation.
+    grain: one row per decision_id
+    keys: [decision_id]
+    columns:
+      decision_id: Deterministic decision identity.
+      scope: Tenant, site and plant scope key.
+      config_version: Plant configuration version.
+      model_id: Model behind the decision.
+      feature_id: Feature row behind the decision.
+      captured_at: Capture time of the input snapshot.
+      decided_at: Decision time (ISO-8601 UTC).
+      mode: shadow (default) or simulate, which only acknowledges the mock plant.
+      state: Decision state, such as BLOCKED, ACKNOWLEDGED, TIMED_OUT or ACK_MISMATCH.
+      reason: Why the decision reached its state, such as SHADOW_ONLY.
+      result_json: Plan, constraint checks and mock acknowledgement as JSON.
+
+metric_views:
+  mv_hvac_energy:
+    source: gold_hvac_metrics_current
+    comment: Energy, power and comfort by device and time. Use reported_energy_kwh for customer reports.
+    dimensions:
+      - {name: site_id, expr: site_id, comment: Facility identifier.}
+      - {name: device_id, expr: device_id, comment: Equipment identifier.}
+      - {name: window_status, expr: window_status, comment: "OPEN, FINAL or RESTATED."}
+      - {name: window_date, expr: window_date, comment: UTC date of the window.}
+      - {name: window_hour, expr: "DATE_TRUNC('HOUR', window_start)", comment: UTC hour of the window.}
+    measures:
+      - {name: energy_kwh, expr: SUM(energy_kwh), comment: Energy in kWh including provisional OPEN windows.}
+      - name: reported_energy_kwh
+        expr: "SUM(energy_kwh) FILTER (WHERE window_status IN ('FINAL', 'RESTATED'))"
+        comment: Energy in kWh from FINAL and RESTATED windows only; the customer reporting figure.
+      - {name: readings, expr: SUM(event_count), comment: Valid readings aggregated.}
+      - name: avg_power_kw
+        expr: SUM(avg_power_kw * event_count) / SUM(event_count)
+        comment: Reading-weighted mean power in kilowatts.
+      - {name: peak_power_kw, expr: MAX(max_power_kw), comment: Highest instantaneous power in kilowatts.}
+      - name: restated_windows
+        expr: "COUNT(1) FILTER (WHERE window_status = 'RESTATED')"
+        comment: Windows whose FINAL value was later corrected.
+
+  mv_data_quality:
+    source: gold_data_quality_scorecard
+    comment: Pipeline data quality by device and day.
+    dimensions:
+      - {name: site_id, expr: site_id, comment: Facility identifier.}
+      - {name: device_id, expr: device_id, comment: Equipment identifier.}
+      - {name: dq_status, expr: dq_status, comment: "PASS, WARN or FAIL per window."}
+      - {name: window_date, expr: window_date, comment: UTC ingest date.}
+    measures:
+      - {name: received_events, expr: SUM(received_events), comment: Records received.}
+      - {name: valid_events, expr: SUM(valid_events), comment: Records that reached Silver.}
+      - {name: quarantined_events, expr: SUM(quarantined_events), comment: Records quarantined.}
+      - name: quality_rate
+        expr: SUM(valid_events) / SUM(received_events)
+        comment: Share of received records that were valid.
+      - name: failing_windows
+        expr: "COUNT(1) FILTER (WHERE dq_status = 'FAIL')"
+        comment: Five-minute windows with quality_score below 0.9.
+
+  mv_compliance:
+    source: gold_compliance
+    comment: Time outside facility environmental limits by device and day.
+    dimensions:
+      - {name: site_id, expr: site_id, comment: Facility identifier.}
+      - {name: device_id, expr: device_id, comment: Equipment identifier.}
+      - {name: window_date, expr: window_date, comment: UTC event date.}
+    measures:
+      - {name: violation_minutes, expr: SUM(violation_minutes), comment: Minutes outside limits.}
+      - {name: temp_violation_events, expr: SUM(temp_violation_events), comment: Readings outside temperature limits.}
+      - {name: humidity_violation_events, expr: SUM(humidity_violation_events), comment: Readings outside humidity limits.}
+      - {name: readings, expr: SUM(events), comment: Readings evaluated.}
+
+  mv_sensor_freshness:
+    source: gold_sensor_freshness
+    comment: Device reporting health against expected intervals.
+    dimensions:
+      - {name: site_id, expr: site_id, comment: Facility identifier.}
+      - {name: commissioning_status, expr: commissioning_status, comment: Commissioning status.}
+    measures:
+      - {name: devices, expr: COUNT(1), comment: Devices observed.}
+      - {name: stale_devices, expr: COUNT(1) FILTER (WHERE is_stale), comment: Devices silent for over three report intervals.}
+      - {name: max_age_seconds, expr: MAX(age_seconds), comment: Longest time since a device last reported.}

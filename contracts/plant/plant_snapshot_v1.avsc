@@ -1,0 +1,25 @@
+{
+  "type": "record",
+  "name": "PlantSnapshot",
+  "namespace": "com.hvacpulse.plant",
+  "fields": [
+    {"name": "schema_version", "type": "int"},
+    {"name": "event_id", "type": "string"},
+    {"name": "tenant_id", "type": "string"},
+    {"name": "site_id", "type": "string"},
+    {"name": "plant_id", "type": "string"},
+    {"name": "config_version", "type": "string"},
+    {"name": "captured_at", "type": "string"},
+    {"name": "operating", "type": "boolean"},
+    {"name": "synthetic", "type": "boolean"},
+    {"name": "applied_decision_id", "type": ["null", "string"], "default": null},
+    {"name": "readings", "type": {"type": "array", "items": {
+      "type": "record", "name": "TagReading", "fields": [
+        {"name": "source_tag", "type": "string"},
+        {"name": "value", "type": ["null", "boolean", "double"]},
+        {"name": "source_time", "type": "string"},
+        {"name": "status", "type": "string"}
+      ]
+    }}}
+  ]
+}

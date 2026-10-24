@@ -1,0 +1,34 @@
+---
+description: Databricks bundle targets, variables, and cloud plant path
+globs: databricks/**,databricks.yml
+alwaysApply: false
+---
+
+# Databricks bundle
+
+`databricks.yml` targets: `dev` (development, default) and `prod`.
+
+Defaults if omitted: catalog `hvacpulse_dev`, schema `streaming`.
+The Azure runbook instead passes `--var "schema=hvacpulse"`. Pass the schema
+you intend; do not assume the default matches that runbook.
+
+Required vars: `eventhubs_bootstrap` (`<namespace>.servicebus.windows.net:9093`)
+and `eventhubs_connection_secret` (`hvacpulse:eventhubs-connection`).
+Pipeline conf `hvacpulse.topic` is `hvac.telemetry`. The Event Hub resource
+name is `hvac-telemetry`.
+
+```powershell
+databricks bundle deploy -t dev --var "eventhubs_bootstrap=<ns>.servicebus.windows.net:9093" --var "eventhubs_connection_secret=hvacpulse:eventhubs-connection" --var "catalog=<catalog>" --var "schema=streaming"
+databricks bundle run -t dev hvacpulse_batch
+```
+
+Lakeflow owns only `bronze_telemetry`, with `pipelines.reset.allowed=false`;
+do not add a dataset that needs a Bronze reset. Silver/quarantine (`run_silver.py`)
+and plant (`run_plant.py`) run as job tasks with `availableNow` and checkpoints
+on `/Volumes/<catalog>/<schema>/checkpoints`.
+
+Job `hvacpulse_batch`: `max_concurrent_runs: 1`, cron `0 */5 * * * ?` UTC.
+Notebooks are thin wrappers. New shared modules must be listed under
+`sync.include`. Cloud plant control stays in shadow mode. Secrets stay in the
+Databricks secret scope.
+Runbook: `docs/runbooks/azure-databricks.md`.

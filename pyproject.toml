@@ -1,0 +1,56 @@
+[project]
+name = "hvacpulse-streaming-platform"
+version = "0.1.0"
+description = "HVAC telemetry, streaming features, model training and gated mock control (Kafka + Spark + Delta Lake)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.6",
+    "fastavro>=1.9",
+    "kafka-python>=2.0.2",
+    "pyspark==3.5.5",
+    "delta-spark==3.2.1",
+    "lz4>=4.4.5",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "chispa>=0.10",
+]
+dashboard = [
+    "streamlit>=1.36",
+    "deltalake>=0.18",
+    "pandas>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ingestion", "streaming", "streaming.jobs", "quality", "plant"]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: offline tests that do not need Spark or Kafka",
+    "spark: tests that spin up a local SparkSession (no Delta jars)",
+    "delta: tests that exercise local Delta transaction/idempotency behavior",
+    "integration: tests that need Docker/Kafka running",
+    "dashboard: offline Streamlit render tests requiring the dashboard dependency group",
+]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+force-single-line = true

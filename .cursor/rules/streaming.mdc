@@ -1,0 +1,44 @@
+---
+description: Delta dataset names, checkpoints, and medallion grain
+globs: streaming/**
+alwaysApply: false
+---
+
+# Streaming datasets
+
+Local: `{HVACPULSE_DATA_ROOT}/delta/<name>` via `Settings._delta_target`.
+Unity Catalog: `{HVACPULSE_CATALOG}.{HVACPULSE_SCHEMA}.<name>`.
+
+Air-handler: `bronze_telemetry`, `silver_telemetry_history`,
+`silver_telemetry_current`, `quarantine_events`, `gold_hvac_metrics_current`,
+`gold_hvac_metrics_history`, `gold_recommendations`, `recommendation_events`,
+`late_corrections`, `metric_restatement_events`, `gold_data_quality_scorecard`,
+`gold_sensor_freshness`, `gold_compliance`, `gold_equipment_health`.
+
+Plant: `silver_plant_snapshots`, `quarantine_plant_snapshots`,
+`gold_plant_features`, `plant_model_registry`, `gold_plant_predictions`,
+`gold_plant_control_decisions`.
+
+Checkpoints, one query each: `bronze`, `silver`, `plant-silver`,
+`plant-features`. Cloud root is `HVACPULSE_CHECKPOINT_ROOT` (ADLS or a UC
+volume). Do not share a checkpoint, and do not run a stream and a drain on it
+at once.
+
+## Grain
+
+- Bronze is append-only Kafka key, payload, and offset. No business-key upsert.
+- Air-handler history key is `event_id`. Current is max `revision_number` per
+  `logical_event_id`. Dedupe `(event_id, payload_hash)`; a different payload is
+  `IDEMPOTENCY_CONFLICT`.
+- Plant Silver identity is scope + capture time. Same payload is a retry;
+  a different payload is quarantined. No silent restatement.
+- Gold current is MERGE-upserted. History appends `metric_version`.
+- Quarantine corrupt rows only. Alarming-but-valid rows stay in Silver
+  (`quality/signals.py`).
+- `spark.databricks.delta.schema.autoMerge.enabled` stays `false`. AQE stays on.
+  Watermark default is `10 minutes`. Drains use `availableNow`; omit `--once`
+  for a long-running stream.
+
+Jobs: `bronze_ingest`, `silver_transform`, `gold_metrics`, `quality_metrics`,
+`recommendations_job`, `reconciliation`, `maintenance`, `plant_silver`,
+`plant_features`, `plant_learning`, `plant_pipeline`.
