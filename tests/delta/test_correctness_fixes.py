@@ -153,9 +153,12 @@ def test_gold_history_publishes_open_to_final_with_unchanged_values(spark, tmp_p
     assert OPEN in statuses
     assert FINAL in statuses
     
+    versions = {row.metric_version for row in history}
+    assert versions == {1, 2}
+    
     current = settings.read_delta(spark, settings.gold_current_path).first()
     assert current.window_status == FINAL
-    assert current.metric_version == 1
+    assert current.metric_version == 2
 
 
 def test_silver_current_merge_with_equal_revision(spark, tmp_path):

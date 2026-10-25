@@ -146,7 +146,7 @@ def publish_gold(spark: SparkSession, metrics: DataFrame, settings: Settings) ->
             joined.withColumn(
                 "metric_version",
                 when(col("_prior_hash").isNull(), lit(1)).otherwise(
-                    when(col("_content_changed"), col("_prior_version") + 1).otherwise(col("_prior_version"))
+                    when(col("_changed"), col("_prior_version") + 1).otherwise(col("_prior_version"))
                 ),
             )
             .withColumn(

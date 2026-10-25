@@ -287,7 +287,7 @@ def test_late_correction_restatement_triggers_gold_restated(spark, tmp_path):
     
     current_restated = settings.read_delta(spark, settings.gold_current_path).first()
     assert current_restated.window_status == RESTATED
-    assert current_restated.metric_version == 2
+    assert current_restated.metric_version == 3
     assert current_restated.restated_at is not None
     
     history = settings.read_delta(spark, settings.gold_history_path).collect()
@@ -296,6 +296,9 @@ def test_late_correction_restatement_triggers_gold_restated(spark, tmp_path):
     assert OPEN in statuses
     assert FINAL in statuses
     assert RESTATED in statuses
+    
+    versions = {r.metric_version for r in history}
+    assert versions == {1, 2, 3}
 
 
 def test_late_correction_reconciliation_tracks_revisions(spark, tmp_path):
