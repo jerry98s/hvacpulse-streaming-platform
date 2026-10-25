@@ -88,8 +88,17 @@ def test_gold_history_and_restatement_are_retry_idempotent(spark, tmp_path):
     publish_gold(spark, metrics(10, "hash-v1"), settings)
     # Second publish: FINAL with hash-v2 (content changed) → version 2, status RESTATED
     publish_gold(spark, metrics(11, "hash-v2"), settings)
-    # Third publish: retry of same data → idempotent, no change
-    publish_gold(spark, metrics(11, "hash-v2"), settings)
+    
+    # Read current state to create proper retry (RESTATED, not FINAL)
+    current_before = settings.read_delta(spark, settings.gold_current_path).first()
+    assert current_before.window_status == RESTATED
+    
+    # Third publish: retry with RESTATED status → idempotent, no change
+    restated_metrics = spark.createDataFrame(
+        [("site-1", "ahu-1", start, end, 11, 10.0, 12.0, 22.0, 50.0, 0.1, RESTATED, "hash-v2")],
+        schema,
+    )
+    publish_gold(spark, restated_metrics, settings)
     
     current = settings.read_delta(spark, settings.gold_current_path).first()
     assert current.metric_version == 2
