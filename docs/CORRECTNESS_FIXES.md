@@ -78,8 +78,10 @@ Status transitions without value changes were ignored.
 Modified `publish_gold()` in `streaming/jobs/gold_metrics.py`:
 1. Calculate both `_content_changed` and `_status_changed`
 2. Set `_changed = _content_changed | _status_changed`
-3. Only increment `metric_version` on `_content_changed` (not status changes)
+3. Increment `metric_version` on ANY change (`_changed`), not just content
 4. Publish to history when either content OR status changes
+
+**Rationale**: The history merge key includes `metric_version`. Status-only changes must increment it to avoid being treated as duplicates. `metric_version` tracks the evolution of a window over time, whether due to content changes (restatement) or lifecycle transitions (finalization).
 
 ### Impact
 - ✅ Complete lifecycle tracking (OPEN → FINAL → RESTATED)
