@@ -84,10 +84,13 @@ def test_gold_history_and_restatement_are_retry_idempotent(spark, tmp_path):
             schema,
         )
 
+    # First publish: FINAL with hash-v1 → version 1
     publish_gold(spark, metrics(10, "hash-v1"), settings)
+    # Second publish: FINAL with hash-v2 (content changed) → version 2, status RESTATED
     publish_gold(spark, metrics(11, "hash-v2"), settings)
+    # Third publish: retry of same data → idempotent, no change
     publish_gold(spark, metrics(11, "hash-v2"), settings)
-
+    
     current = settings.read_delta(spark, settings.gold_current_path).first()
     assert current.metric_version == 2
     assert current.window_status == RESTATED

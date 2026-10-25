@@ -87,7 +87,8 @@ Modified `publish_gold()` in `streaming/jobs/gold_metrics.py`:
 - ✅ Complete lifecycle tracking (OPEN → FINAL → RESTATED)
 - ✅ Accurate historical reconstruction
 - ✅ Status transitions now trigger history writes
-- ✅ Metric version still only increments on value changes
+- ✅ Metric version increments on ANY change (status or content)
+- 📊 Example: OPEN=v1, FINAL=v2 (status change), RESTATED=v3 (content change)
 
 ### Test Coverage
 - `tests/delta/test_correctness_fixes.py::test_gold_history_publishes_open_to_final_with_unchanged_values`

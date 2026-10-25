@@ -260,7 +260,7 @@ def test_late_correction_restatement_triggers_gold_restated(spark, tmp_path):
     
     current_final = settings.read_delta(spark, settings.gold_current_path).first()
     assert current_final.window_status == FINAL
-    assert current_final.metric_version == 1
+    assert current_final.metric_version == 2
     
     corrected_silver = spark.createDataFrame(
         [
