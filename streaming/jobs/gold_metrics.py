@@ -167,10 +167,10 @@ def publish_gold(spark: SparkSession, metrics: DataFrame, settings: Settings) ->
                     current_timestamp(),
                 ).otherwise(col("_prior_restated_at")),
             )
-            .drop("_prior_version", "_prior_hash", "_prior_status", "_prior_restated_at", "_content_changed", "_status_changed")
+            .drop("_prior_version", "_prior_hash", "_prior_status", "_prior_restated_at")
         )
-        to_publish = versioned.filter(col("_changed")).drop("_changed")
-        versioned = versioned.drop("_changed")
+        to_publish = versioned.filter(col("_changed")).drop("_changed", "_content_changed", "_status_changed")
+        versioned = versioned.drop("_changed", "_content_changed", "_status_changed")
     else:
         versioned = metrics.withColumn("metric_version", lit(1)).withColumn(
             "restated_at", lit(None).cast("timestamp")

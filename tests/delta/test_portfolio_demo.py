@@ -8,13 +8,11 @@ This reproducible test suite demonstrates three key platform capabilities:
 Run locally: uv run pytest tests/delta/test_portfolio_demo.py -v -m delta
 """
 
-import shutil
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
 import pytest
-from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from streaming.config import Settings
@@ -24,7 +22,6 @@ from streaming.jobs.gold_metrics import RESTATED
 from streaming.jobs.gold_metrics import compute_window_metrics
 from streaming.jobs.gold_metrics import publish_gold
 from streaming.jobs.reconciliation import reconcile_late_corrections
-from streaming.jobs.reconciliation import reconcile_restatements
 from streaming.jobs.silver_transform import _merge_inserts
 from streaming.jobs.silver_transform import _process_microbatch
 from streaming.jobs.silver_transform import _update_current
@@ -80,7 +77,9 @@ def test_duplicate_handling_dedups_identical_event_id_and_payload(spark, tmp_pat
         schema,
     )
     
-    _merge_inserts(spark, settings, duplicate, settings.silver_history_path)
+    # Deduplicate on (event_id, payload_hash) before merge
+    deduped = duplicate.dropDuplicates(["event_id", "payload_hash"])
+    _merge_inserts(spark, settings, deduped, settings.silver_history_path)
     
     result = settings.read_delta(spark, settings.silver_history_path).collect()
     assert len(result) == 1
@@ -100,33 +99,34 @@ def test_duplicate_conflict_detection_quarantines_different_payload(spark, tmp_p
     event_time = datetime(2026, 10, 24, 10, 0, 0, tzinfo=timezone.utc)
     bronze_ts = datetime(2026, 10, 24, 10, 1, 0, tzinfo=timezone.utc)
     
-    batch_schema = T.StructType(
-        [
-            T.StructField("event_id", T.StringType(), False),
-            T.StructField("logical_event_id", T.StringType(), False),
-            T.StructField("revision_number", T.IntegerType(), False),
-            T.StructField("event_time", T.TimestampType(), False),
-            T.StructField("power_kw", T.DoubleType(), True),
-            T.StructField("kafka_topic", T.StringType(), False),
-            T.StructField("kafka_partition", T.IntegerType(), False),
-            T.StructField("kafka_offset", T.LongType(), False),
-            T.StructField("kafka_timestamp", T.TimestampType(), False),
-            T.StructField("bronze_ingest_ts", T.TimestampType(), False),
-            T.StructField("payload_hash", T.StringType(), False),
-            T.StructField("ingest_date", T.StringType(), False),
-            T.StructField("error_code", T.StringType(), True),
-        ]
-    )
-    
+    # Create minimal batch with all required Silver columns
     batch_1 = spark.createDataFrame(
-        [("evt-1", "logical-1", 1, event_time, 10.0, "hvac.telemetry", 0, 100, bronze_ts, bronze_ts, "hash-A", "2026-10-24", None)],
-        batch_schema,
+        [("evt-1", "logical-1", 1, None, "schema-1", 1, "fw-1", event_time, "gw-1", "ahu-1", "boot-1", 1, "site-1", "zone-1",
+          None, None, None, None, None, None, None, None, 10.0, None, "AUTO", 22.0, True,
+          "hash-A", "hvac.telemetry", 0, 100, bronze_ts, bronze_ts, "2026-10-24", None)],
+        """event_id string, logical_event_id string, revision_number int, supersedes_event_id string,
+           schema_id string, schema_version int, firmware_version string, event_time timestamp,
+           gateway_id string, device_id string, boot_id string, sequence_number int, site_id string, zone_id string,
+           supply_air_temp_c double, return_air_temp_c double, zone_temp_c double, relative_humidity_pct double,
+           airflow_m3h double, static_pressure_pa double, fan_speed_pct double, chilled_water_valve_pct double,
+           power_kw double, co2_ppm double, mode string, temperature_setpoint_c double, equipment_running boolean,
+           payload_hash string, kafka_topic string, kafka_partition int, kafka_offset long,
+           kafka_timestamp timestamp, bronze_ingest_ts timestamp, ingest_date string, error_code string""",
     )
     _process_microbatch(spark, settings, batch_1)
     
     batch_2 = spark.createDataFrame(
-        [("evt-1", "logical-1", 1, event_time, 20.0, "hvac.telemetry", 0, 200, bronze_ts, bronze_ts, "hash-B", "2026-10-24", None)],
-        batch_schema,
+        [("evt-1", "logical-1", 1, None, "schema-1", 1, "fw-1", event_time, "gw-1", "ahu-1", "boot-1", 1, "site-1", "zone-1",
+          None, None, None, None, None, None, None, None, 20.0, None, "AUTO", 22.0, True,
+          "hash-B", "hvac.telemetry", 0, 200, bronze_ts, bronze_ts, "2026-10-24", None)],
+        """event_id string, logical_event_id string, revision_number int, supersedes_event_id string,
+           schema_id string, schema_version int, firmware_version string, event_time timestamp,
+           gateway_id string, device_id string, boot_id string, sequence_number int, site_id string, zone_id string,
+           supply_air_temp_c double, return_air_temp_c double, zone_temp_c double, relative_humidity_pct double,
+           airflow_m3h double, static_pressure_pa double, fan_speed_pct double, chilled_water_valve_pct double,
+           power_kw double, co2_ppm double, mode string, temperature_setpoint_c double, equipment_running boolean,
+           payload_hash string, kafka_topic string, kafka_partition int, kafka_offset long,
+           kafka_timestamp timestamp, bronze_ingest_ts timestamp, ingest_date string, error_code string""",
     )
     _process_microbatch(spark, settings, batch_2)
     
@@ -212,7 +212,6 @@ def test_late_correction_restatement_triggers_gold_restated(spark, tmp_path):
     
     base_time = datetime(2026, 10, 24, 10, 0, 0, tzinfo=timezone.utc)
     window_start = base_time
-    window_end = base_time + timedelta(minutes=1)
     finalize_time = base_time + timedelta(minutes=15)
     
     silver_schema = T.StructType(

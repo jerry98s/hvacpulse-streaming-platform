@@ -16,7 +16,6 @@ from pyspark.sql import types as T
 from streaming.config import Settings
 from streaming.jobs.gold_metrics import FINAL
 from streaming.jobs.gold_metrics import OPEN
-from streaming.jobs.gold_metrics import compute_window_metrics
 from streaming.jobs.gold_metrics import publish_gold
 from streaming.jobs.silver_transform import _merge_quarantine
 from streaming.jobs.silver_transform import _update_current
@@ -103,9 +102,11 @@ def test_silver_observability_timestamps_distinct_from_event_time(spark, tmp_pat
     settings.write_delta(silver_row, settings.silver_history_path, partition_by=["ingest_date"])
     result = settings.read_delta(spark, settings.silver_history_path).first()
     
-    assert result.event_time == event_time
-    assert result.bronze_ingest_ts == bronze_ts
-    assert before_commit <= result.silver_commit_ts <= after_commit
+    # Spark may return naive datetimes; compare as timestamps or strip timezone for comparison
+    assert result.event_time.replace(tzinfo=timezone.utc) == event_time
+    assert result.bronze_ingest_ts.replace(tzinfo=timezone.utc) == bronze_ts
+    result_commit_ts = result.silver_commit_ts.replace(tzinfo=timezone.utc)
+    assert before_commit <= result_commit_ts <= after_commit
     assert result.silver_commit_ts != result.bronze_ingest_ts
 
 
