@@ -73,11 +73,11 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
     # Silver with violations: one reading violates both temp (too hot) and humidity (too high)
     silver = spark.createDataFrame(
         [
-            ("site-1", "ahu-1", event_time, 30.0, 70.0, 5.0),  # Both violations
-            ("site-1", "ahu-1", event_time + timedelta(seconds=5), 22.0, 50.0, 5.0),  # No violations
+            ("site-1", "ahu-1", event_time, 30.0, 70.0),  # Both violations
+            ("site-1", "ahu-1", event_time + timedelta(seconds=5), 22.0, 50.0),  # No violations
         ],
         "site_id string, device_id string, event_time timestamp, zone_temp_c double, "
-        "relative_humidity_pct double, expected_report_interval_sec double",
+        "relative_humidity_pct double",
     )
     settings.write_delta(silver, settings.silver_current_path)
     
