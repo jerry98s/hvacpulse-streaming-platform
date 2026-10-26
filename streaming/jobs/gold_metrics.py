@@ -133,8 +133,14 @@ def publish_gold(spark: SparkSession, metrics: DataFrame, settings: Settings) ->
             col("restated_at").alias("_prior_restated_at"),
         )
         joined = metrics.join(existing, GOLD_KEY, "left").withColumn(
-            "_changed",
+            "_content_changed",
             col("_prior_hash").isNull() | (col("_prior_hash") != col("_content_hash")),
+        ).withColumn(
+            "_status_changed",
+            col("_prior_status").isNull() | (col("_prior_status") != col("window_status")),
+        ).withColumn(
+            "_changed",
+            col("_content_changed") | col("_status_changed"),
         )
         versioned = (
             joined.withColumn(
@@ -147,24 +153,24 @@ def publish_gold(spark: SparkSession, metrics: DataFrame, settings: Settings) ->
                 "window_status",
                 when(col("_prior_hash").isNull(), col("window_status"))
                 .when(
-                    col("_changed")
+                    col("_content_changed")
                     & col("_prior_status").isin(FINAL, RESTATED),
                     lit(RESTATED),
                 )
-                .when(~col("_changed") & (col("_prior_status") == lit(RESTATED)), lit(RESTATED))
+                .when(~col("_content_changed") & (col("_prior_status") == lit(RESTATED)), lit(RESTATED))
                 .otherwise(col("window_status")),
             )
             .withColumn(
                 "restated_at",
                 when(
-                    col("_changed") & col("_prior_status").isin(FINAL, RESTATED),
+                    col("_content_changed") & col("_prior_status").isin(FINAL, RESTATED),
                     current_timestamp(),
                 ).otherwise(col("_prior_restated_at")),
             )
             .drop("_prior_version", "_prior_hash", "_prior_status", "_prior_restated_at")
         )
-        to_publish = versioned.filter(col("_changed")).drop("_changed")
-        versioned = versioned.drop("_changed")
+        to_publish = versioned.filter(col("_changed")).drop("_changed", "_content_changed", "_status_changed")
+        versioned = versioned.drop("_changed", "_content_changed", "_status_changed")
     else:
         versioned = metrics.withColumn("metric_version", lit(1)).withColumn(
             "restated_at", lit(None).cast("timestamp")

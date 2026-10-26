@@ -114,7 +114,7 @@ def flatten_parsed(df: DataFrame) -> DataFrame:
         col("partition").alias("kafka_partition"),
         col("offset").alias("kafka_offset"),
         col("kafka_timestamp"),
-        col("ingest_ts"),
+        col("ingest_ts").alias("bronze_ingest_ts"),
         col("ingest_ts").cast("date").alias("ingest_date"),
         col(SCHEMA_VERSION_HEADER),
         hex_(col("value")).alias("payload_hex"),
@@ -184,5 +184,11 @@ def with_validation(
 
 
 def silver_projection(df: DataFrame) -> DataFrame:
-    """Project a validated batch to exactly the Silver column contract."""
-    return df.select(*SILVER_COLUMNS)
+    """Project a validated batch to exactly the Silver column contract.
+    
+    Adds silver_commit_ts to mark when each row becomes observable in Silver,
+    distinct from bronze_ingest_ts (when it landed in Bronze).
+    """
+    return df.select(*[c for c in SILVER_COLUMNS if c != "silver_commit_ts"]).withColumn(
+        "silver_commit_ts", current_timestamp()
+    )

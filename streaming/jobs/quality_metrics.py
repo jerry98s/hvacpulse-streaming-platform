@@ -56,7 +56,7 @@ def build_dq_scorecard(spark: SparkSession, settings: Settings):
     """Per site/device/5-minute window: received vs valid vs quarantined."""
     silver = (
         settings.read_delta(spark, settings.silver_history_path)
-        .groupBy("site_id", "device_id", window(col("ingest_ts"), WINDOW))
+        .groupBy("site_id", "device_id", window(col("bronze_ingest_ts"), WINDOW))
         .agg(
             count("*").alias("valid_events"),
             # NULL-rate SLA: critical measurements

@@ -34,13 +34,13 @@ def reconcile_late_corrections(spark: SparkSession, settings: Settings) -> int:
     late = (
         settings.read_delta(spark, settings.silver_history_path)
         .filter(col("revision_number") > 1)
-        .filter(col("ingest_ts") > col("event_time") + expr(WATERMARK_INTERVAL))
+        .filter(col("bronze_ingest_ts") > col("event_time") + expr(WATERMARK_INTERVAL))
         .select(
             "event_id",
             "device_id",
             "site_id",
             "event_time",
-            "ingest_ts",
+            col("bronze_ingest_ts").alias("ingest_ts"),
             "revision_number",
             "supersedes_event_id",
             "payload_hash",

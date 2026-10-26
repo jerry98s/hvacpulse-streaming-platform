@@ -53,6 +53,7 @@ SILVER_COLUMNS = [
     "kafka_partition",
     "kafka_offset",
     "kafka_timestamp",
-    "ingest_ts",
+    "bronze_ingest_ts",
+    "silver_commit_ts",
     "ingest_date",
 ]
