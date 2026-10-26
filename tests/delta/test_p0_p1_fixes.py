@@ -10,8 +10,10 @@ P1-5: DQ denominator clarity
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from pathlib import Path
 
 import pytest
+import yaml
 from pyspark.sql import types as T
 
 from streaming.config import Settings
@@ -32,9 +34,6 @@ def spark():
 
 def test_metadata_yaml_matches_silver_columns():
     """P0-2: Verify semantic_model.yml documents actual Silver columns."""
-    import yaml
-    from pathlib import Path
-    
     yaml_path = Path(__file__).parents[2] / "reference" / "semantic_model.yml"
     with open(yaml_path) as f:
         model = yaml.safe_load(f)
@@ -88,7 +87,8 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
         "device_id string, expected_report_interval_sec double, temp_min_c double, "
         "temp_max_c double, humidity_min_pct double, humidity_max_pct double",
     )
-    settings.write_delta(limits, settings.known_devices_csv.parent / "equipment_limits.csv")
+    limits_path = tmp_path / "equipment_limits.csv"
+    settings.write_delta(limits, str(limits_path))
     
     compliance = build_compliance(spark, settings).first()
     
@@ -168,8 +168,6 @@ def test_energy_complete_coverage(spark, tmp_path):
 
 def test_streaming_watermark_column_resolution(spark, tmp_path):
     """P0-1: Streaming query should analyze without unresolved bronze_ingest_ts."""
-    from pyspark.sql.functions import current_timestamp as current_ts
-    
     settings = Settings(root=tmp_path)
     
     # Create a streaming Bronze source with bronze_ingest_ts

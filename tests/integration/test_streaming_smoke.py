@@ -19,14 +19,17 @@ def test_silver_streaming_query_analyzes_successfully():
     
     # This will fail at analysis time if bronze_ingest_ts is unresolved
     try:
+        from pyspark.sql.functions import coalesce
+        from pyspark.sql.functions import col
+        from pyspark.sql.functions import concat
+        from pyspark.sql.functions import lit
+
         from streaming.jobs import silver_transform
-        from streaming.transforms import (
-            flatten_parsed,
-            parse_bronze,
-            with_schema_version_header,
-            with_validation,
-        )
-        
+        from streaming.transforms import flatten_parsed
+        from streaming.transforms import parse_bronze
+        from streaming.transforms import with_schema_version_header
+        from streaming.transforms import with_validation
+
         # Read known devices
         known_devices = silver_transform.read_known_devices(settings.known_devices_csv)
         
@@ -38,9 +41,8 @@ def test_silver_streaming_query_analyzes_successfully():
             flatten_parsed(parse_bronze(with_schema_version_header(bronze))),
             known_devices=known_devices,
         )
-        
+
         # This is where the watermark would fail if bronze_ingest_ts doesn't exist
-        from pyspark.sql.functions import coalesce, col, concat, lit
         deduped = (
             validated.withColumn(
                 "_dedup_id",
