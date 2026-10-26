@@ -55,8 +55,10 @@ METRIC_VALUE_COLUMNS = [
     "avg_zone_temp_c",
     "avg_humidity_pct",
     "energy_kwh",
+    "coverage",
+    "incomplete",
 ]
-ROUNDED_COLUMNS = [c for c in METRIC_VALUE_COLUMNS if c != "event_count"]
+ROUNDED_COLUMNS = [c for c in METRIC_VALUE_COLUMNS if c not in ("event_count", "incomplete")]
 METRIC_DECIMALS = 6
 
 OPEN = "OPEN"
@@ -78,6 +80,11 @@ def compute_window_metrics(
     now = now or datetime.now(timezone.utc)
     finalize_before = now - finalize_after
     interval = create_map(*[lit(x) for item in report_interval_sec.items() for x in item])[col("device_id")]
+    
+    # Parse window duration (e.g., "1 minute" -> 60 seconds)
+    duration_parts = window_duration.split()
+    window_seconds = int(duration_parts[0]) * (60 if "minute" in duration_parts[1] else 1)
+    
     metrics = (
         silver_current.groupBy("site_id", "device_id", window(col("event_time"), window_duration))
         .agg(
@@ -93,6 +100,20 @@ def compute_window_metrics(
         .drop("window")
         .withColumn("energy_kwh", col("_power_seconds") / lit(3600.0))
         .drop("_power_seconds")
+        # Coverage: observed samples / expected samples in the window
+        .withColumn(
+            "_expected_samples",
+            lit(window_seconds) / interval
+        )
+        .withColumn(
+            "coverage",
+            round_(col("event_count") / col("_expected_samples"), 4)
+        )
+        .withColumn(
+            "incomplete",
+            col("coverage") < lit(0.95)
+        )
+        .drop("_expected_samples")
         # Spark double sums vary in the last bits with partition order; rounding
         # keeps that noise out of _content_hash so it never restates a window.
         .withColumns({c: round_(col(c), METRIC_DECIMALS) for c in ROUNDED_COLUMNS})
