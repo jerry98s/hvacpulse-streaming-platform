@@ -45,9 +45,11 @@ with tab_energy:
         gold = gold.sort_values("window_start")
         site = st.selectbox("Site", sorted(gold["site_id"].unique()))
         view = gold[gold["site_id"] == site]
+        # Reported energy: FINAL and RESTATED only (matches mv_hvac_energy.reported_energy_kwh)
+        reported_view = view[view["window_status"].isin(["FINAL", "RESTATED"])]
         c1, c2, c3 = st.columns(3)
         c1.metric("Devices", view["device_id"].nunique())
-        c2.metric("Energy (kWh, shown windows)", round(view["energy_kwh"].sum(), 2))
+        c2.metric("Reported Energy (kWh)", round(reported_view["energy_kwh"].sum(), 2))
         c3.metric("Restated windows", int((view["window_status"] == "RESTATED").sum()))
         st.subheader("Energy per window")
         st.line_chart(

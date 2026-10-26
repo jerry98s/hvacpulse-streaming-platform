@@ -211,7 +211,7 @@ def run(settings: Settings, *, once: bool = True) -> None:
                 ),
             ),
         )
-        .withWatermark("ingest_ts", settings.watermark)
+        .withWatermark("bronze_ingest_ts", settings.watermark)
         .dropDuplicatesWithinWatermark(["_dedup_id", "payload_hash"])
     )
 

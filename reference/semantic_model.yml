@@ -12,8 +12,9 @@ shared:
     kafka_partition: Kafka partition of the source record.
     kafka_offset: Kafka offset of the source record; with topic and partition it locates the exact message.
     kafka_timestamp: Broker append time of the source record (UTC).
-    ingest_ts: Time Spark ingested the record into Bronze (UTC); drives the dedup watermark.
-    ingest_date: Partition column, the UTC date of ingest_ts.
+    bronze_ingest_ts: Time Spark ingested the record into Bronze (UTC); drives the dedup watermark.
+    silver_commit_ts: Time the row became observable in Silver (UTC); tracks Silver processing completion.
+    ingest_date: Partition column, the UTC date of bronze_ingest_ts.
 
   telemetry: &telemetry
     event_id: Physical event identity from the device gateway; unique per message revision.
@@ -77,9 +78,9 @@ tables:
       offset: Kafka offset within the partition.
       kafka_timestamp: Broker append time (UTC).
       headers: Kafka headers, including schema_version and event_type.
-      ingest_ts: Time Spark ingested the record (UTC).
+      bronze_ingest_ts: Time Spark ingested the record (UTC).
       ingest_date:
-        description: Partition column, the UTC date of ingest_ts. Local only; the cloud table clusters by ingest_ts instead.
+        description: Partition column, the UTC date of bronze_ingest_ts. Local only; the cloud table clusters by bronze_ingest_ts instead.
         optional: true
       payload_hash: SHA-256 of the raw payload.
       wire_schema_version: schema_version header value used to choose the Avro reader schema.
@@ -138,6 +139,8 @@ tables:
       avg_zone_temp_c: Mean zone temperature in degrees Celsius.
       avg_humidity_pct: Mean relative humidity in percent.
       energy_kwh: Energy in kWh, the sum of power_kw times the device expected report interval, divided by 3600, rounded to 6 decimals.
+      coverage: Observed readings divided by expected readings in the window, from 0 to 1+. Above 1 indicates duplicate or higher-frequency data.
+      incomplete: True when coverage is below 0.95; FINAL windows can still be incomplete when samples are missing.
       window_status: OPEN while the window can still change, FINAL ten minutes after it closes, RESTATED when a FINAL window changed.
       _content_hash: SHA-256 of the metric values; a change creates a new metric_version.
       metric_version: Publication version of the window, starting at 1.
@@ -157,7 +160,7 @@ tables:
   gold_data_quality_scorecard:
     layer: gold
     domain: quality
-    description: Data quality per device and five-minute ingest window, valid versus quarantined records and null rates.
+    description: Data quality per device and five-minute ingest window, valid versus quarantined records and null rates. Counts are post-deduplication; raw Bronze may have more records.
     grain: one row per site_id, device_id and five-minute window_start (ingest time)
     keys: [site_id, device_id, window_start]
     columns:
@@ -166,9 +169,9 @@ tables:
       window_start: Window start by ingest time (UTC).
       window_end: Window end by ingest time (UTC).
       window_date: UTC date of window_start.
-      valid_events: Records that reached Silver.
-      quarantined_events: Records sent to quarantine.
-      received_events: valid_events plus quarantined_events.
+      valid_events: Unique records that reached Silver after deduplication.
+      quarantined_events: Unique records sent to quarantine after deduplication.
+      received_events: valid_events plus quarantined_events; does not include duplicates eliminated by streaming watermark.
       distinct_error_codes: Number of different quarantine error codes.
       idempotency_conflicts: Quarantined IDEMPOTENCY_CONFLICT records.
       null_zone_temp_rate: Share of valid records with null zone_temp_c.
@@ -216,7 +219,7 @@ tables:
       humidity_violation_events: Readings with humidity outside the device limits.
       avg_zone_temp_c: Mean zone temperature in degrees Celsius.
       avg_humidity_pct: Mean relative humidity in percent.
-      violation_minutes: Minutes outside limits, each violating reading counted for its device report interval, summed across temperature and humidity.
+      violation_minutes: Minutes outside limits; each reading with ANY violation (temp OR humidity) counted once for its device report interval. Simultaneous temp+humidity violations count the interval once, not twice.
 
   gold_equipment_health:
     layer: gold
@@ -278,7 +281,7 @@ tables:
       device_id: Equipment identifier.
       site_id: Facility identifier.
       event_time: Equipment snapshot time (UTC).
-      ingest_ts: Ingest time (UTC), more than the watermark after event_time.
+      ingest_ts: Bronze ingest time (UTC), more than the watermark after event_time.
       ingest_date: Partition column, the UTC date of ingest_ts.
       revision_number: Revision number, greater than 1.
       supersedes_event_id: event_id the revision replaces.

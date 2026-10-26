@@ -193,9 +193,9 @@ def build_compliance(spark: SparkSession, settings: Settings):
             sum_(when(col("humidity_violation"), 1).otherwise(0)).alias("humidity_violation_events"),
             avg("zone_temp_c").alias("avg_zone_temp_c"),
             avg("relative_humidity_pct").alias("avg_humidity_pct"),
+            # Elapsed time: count each reading interval once when ANY violation occurs
             sum_(
-                (when(col("temp_violation"), 1).otherwise(0) + when(col("humidity_violation"), 1).otherwise(0))
-                * col("expected_report_interval_sec")
+                when(col("temp_violation") | col("humidity_violation"), col("expected_report_interval_sec")).otherwise(0)
             ).alias("_violation_seconds"),
         )
         .withColumn("window_start", col("window.start"))
