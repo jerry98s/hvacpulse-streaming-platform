@@ -68,8 +68,6 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
     """P1-3: Simultaneous temp+humidity violations count interval once, not twice."""
     import csv
     
-    settings = Settings(root=tmp_path)
-    
     # Write equipment master CSV with limits
     equipment_master_path = tmp_path / "reference" / "equipment_master.csv"
     equipment_master_path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,6 +101,7 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
             "commissioning_status": "active",
         })
     
+    settings = Settings(root=tmp_path, known_devices_csv=equipment_master_path)
     event_time = datetime(2026, 10, 26, 10, 0, 0, tzinfo=timezone.utc)
     
     # Silver with violations: one reading violates both temp (too hot) and humidity (too high)
