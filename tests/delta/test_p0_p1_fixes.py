@@ -66,7 +66,42 @@ def test_metadata_yaml_matches_silver_columns():
 
 def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, tmp_path):
     """P1-3: Simultaneous temp+humidity violations count interval once, not twice."""
+    import csv
+    
     settings = Settings(root=tmp_path)
+    
+    # Write equipment master CSV with limits
+    equipment_master_path = tmp_path / "reference" / "equipment_master.csv"
+    equipment_master_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(equipment_master_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "device_id",
+                "site_id",
+                "zone_id",
+                "expected_report_interval_sec",
+                "rated_power_kw",
+                "temp_min_c",
+                "temp_max_c",
+                "humidity_min_pct",
+                "humidity_max_pct",
+                "commissioning_status",
+            ],
+        )
+        writer.writeheader()
+        writer.writerow({
+            "device_id": "ahu-1",
+            "site_id": "site-1",
+            "zone_id": "zone-1",
+            "expected_report_interval_sec": "5.0",
+            "rated_power_kw": "10.0",
+            "temp_min_c": "18.0",
+            "temp_max_c": "25.0",
+            "humidity_min_pct": "30.0",
+            "humidity_max_pct": "60.0",
+            "commissioning_status": "active",
+        })
     
     event_time = datetime(2026, 10, 26, 10, 0, 0, tzinfo=timezone.utc)
     
@@ -80,15 +115,6 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
         "relative_humidity_pct double",
     )
     settings.write_delta(silver, settings.silver_current_path)
-    
-    # Equipment limits: temp 18-25°C, humidity 30-60%
-    limits = spark.createDataFrame(
-        [("ahu-1", 5.0, 18.0, 25.0, 30.0, 60.0)],
-        "device_id string, expected_report_interval_sec double, temp_min_c double, "
-        "temp_max_c double, humidity_min_pct double, humidity_max_pct double",
-    )
-    limits_path = tmp_path / "equipment_limits.csv"
-    settings.write_delta(limits, str(limits_path))
     
     compliance = build_compliance(spark, settings).first()
     
