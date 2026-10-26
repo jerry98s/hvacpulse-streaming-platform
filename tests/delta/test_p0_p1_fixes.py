@@ -76,6 +76,7 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
             f,
             fieldnames=[
                 "device_id",
+                "equipment_type",
                 "site_id",
                 "zone_id",
                 "expected_report_interval_sec",
@@ -90,6 +91,7 @@ def test_compliance_elapsed_time_counts_once_for_simultaneous_violations(spark, 
         writer.writeheader()
         writer.writerow({
             "device_id": "ahu-1",
+            "equipment_type": "air_handler",
             "site_id": "site-1",
             "zone_id": "zone-1",
             "expected_report_interval_sec": "5.0",
