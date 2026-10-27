@@ -183,14 +183,14 @@ tables:
   gold_sensor_freshness:
     layer: gold
     domain: quality
-    description: Staleness of each device against its expected report interval.
-    grain: one row per device_id
+    description: Staleness of every equipment-master device against its expected report interval; a device that never reported is stale.
+    grain: one row per device_id in reference/equipment_master.csv
     keys: [device_id]
     columns:
       device_id: Equipment identifier.
-      site_id: Facility identifier.
-      last_event_time: Latest event_time in current Silver.
-      total_events: Current Silver readings for the device.
+      site_id: Facility identifier from the equipment master.
+      last_event_time: Latest event_time in current Silver; null when the device never reported.
+      total_events: Current Silver readings for the device; 0 when it never reported.
       commissioning_status: Commissioning status from the equipment master.
       expected_report_interval_sec: Expected seconds between readings, from the equipment master.
       rated_power_kw: Rated electrical power from the equipment master.
@@ -198,8 +198,8 @@ tables:
       temp_max_c: Upper zone temperature limit from the equipment master.
       humidity_min_pct: Lower humidity limit from the equipment master.
       humidity_max_pct: Upper humidity limit from the equipment master.
-      age_seconds: Seconds between computed_at and last_event_time.
-      is_stale: True when age_seconds exceeds three expected report intervals.
+      age_seconds: Seconds between computed_at and last_event_time; null when the device never reported.
+      is_stale: True when the device never reported or age_seconds exceeds three expected report intervals.
       computed_at: Time the job computed the row.
 
   gold_compliance:
@@ -231,10 +231,12 @@ tables:
       site_id: Facility identifier.
       device_id: Equipment identifier.
       events: Current Silver readings evaluated.
-      not_running_high_power_events: Readings that report not running while drawing over 30 percent of rated power.
-      fan_stopped_high_airflow_events: Readings with fan speed 0 and airflow above 1000 cubic metres per hour.
-      valve_closed_high_cooling_events: Readings with the chilled water valve closed and more than 2 degrees of cooling.
-      has_active_anomaly: True when any inconsistency count is above zero.
+      last_event_time: Latest event_time for the device in current Silver.
+      not_running_high_power_events: All current readings that report not running while drawing over 30 percent of rated power.
+      fan_stopped_high_airflow_events: All current readings with fan speed 0 and airflow above 1000 cubic metres per hour.
+      valve_closed_high_cooling_events: All current readings with the chilled water valve closed and more than 2 degrees of cooling.
+      active_anomaly_events: Inconsistent readings within anomaly_window_minutes (reference/monitoring.yml) of last_event_time.
+      has_active_anomaly: True when active_anomaly_events is above zero; older incidents do not count.
       computed_at: Time the job computed the row.
 
   gold_recommendations:
@@ -401,6 +403,46 @@ tables:
       reason: Why the decision reached its state, such as SHADOW_ONLY.
       result_json: Plan, constraint checks and mock acknowledgement as JSON.
 
+  ops_pipeline_stage_runs:
+    layer: ops
+    domain: platform
+    description: Append-only execution log; every stage attempt writes STARTED, then SUCCEEDED or FAILED.
+    grain: one row per run_id, stage_name, attempt and status
+    keys: [run_id, stage_name, attempt, status]
+    columns:
+      run_id: Databricks job run id, or a generated local id shared by one local invocation.
+      stage_name: Pipeline stage, such as silver_transform or quality_metrics.
+      attempt: Attempt of the stage within the run, starting at 1; retries and repairs increment it.
+      status: STARTED, SUCCEEDED or FAILED.
+      event_at: Time this status was recorded (UTC).
+      started_at: Time the attempt started (UTC).
+      finished_at: Time the attempt ended (UTC); null for STARTED.
+      duration_seconds: Seconds from started_at to finished_at; null for STARTED.
+      input_rows: Rows the streaming source delivered to the attempt; null for batch stages.
+      input_versions_json: Delta versions of the declared input tables when the attempt started, as JSON.
+      source_offsets_json: Streaming end offsets reached by the attempt, as JSON; for a Delta source this includes the table version.
+      error_message: Exception type and message for FAILED; null otherwise.
+
+  ops_dataset_publications:
+    layer: ops
+    domain: platform
+    description: Append-only record of every table version a stage committed, with its publication checks.
+    grain: one row per run_id, stage_name, attempt and table_name
+    keys: [run_id, stage_name, attempt, table_name]
+    columns:
+      run_id: Run that produced the version.
+      stage_name: Stage that wrote the table.
+      attempt: Stage attempt that wrote the table.
+      table_name: Published table.
+      delta_version: Latest Delta version the attempt committed; read this version for a consistent snapshot.
+      committed_at: Commit time of delta_version.
+      operations: Delta operations the attempt committed, such as MERGE or WRITE.
+      rows_written: Rows inserted, updated or written across the attempt's commits.
+      checks_passed: True when the committed columns match reference/semantic_model.yml.
+      status: PUBLISHED when the checks passed, BLOCKED when they failed.
+      error_message: Failed checks; null when PUBLISHED.
+      recorded_at: Time the publication was recorded (UTC).
+
 metric_views:
   mv_hvac_energy:
     source: gold_hvac_metrics_current
@@ -464,6 +506,6 @@ metric_views:
       - {name: site_id, expr: site_id, comment: Facility identifier.}
       - {name: commissioning_status, expr: commissioning_status, comment: Commissioning status.}
     measures:
-      - {name: devices, expr: COUNT(1), comment: Devices observed.}
+      - {name: devices, expr: COUNT(1), comment: Devices in the equipment master.}
       - {name: stale_devices, expr: COUNT(1) FILTER (WHERE is_stale), comment: Devices silent for over three report intervals.}
       - {name: max_age_seconds, expr: MAX(age_seconds), comment: Longest time since a device last reported.}

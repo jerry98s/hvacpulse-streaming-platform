@@ -13,7 +13,8 @@ Air-handler: `bronze_telemetry`, `silver_telemetry_history`,
 `silver_telemetry_current`, `quarantine_events`, `gold_hvac_metrics_current`,
 `gold_hvac_metrics_history`, `gold_recommendations`, `recommendation_events`,
 `late_corrections`, `metric_restatement_events`, `gold_data_quality_scorecard`,
-`gold_sensor_freshness`, `gold_compliance`, `gold_equipment_health`.
+`gold_sensor_freshness`, `gold_compliance`, `gold_equipment_health`,
+`ops_pipeline_stage_runs`, `ops_dataset_publications`.
 
 Plant: `silver_plant_snapshots`, `quarantine_plant_snapshots`,
 `gold_plant_features`, `plant_model_registry`, `gold_plant_predictions`,
@@ -41,4 +42,5 @@ at once.
 
 Jobs: `bronze_ingest`, `silver_transform`, `gold_metrics`, `quality_metrics`,
 `recommendations_job`, `reconciliation`, `maintenance`, `plant_silver`,
-`plant_features`, `plant_learning`, `plant_pipeline`.
+`plant_features`, `plant_learning`, `plant_pipeline`, `pipeline_health`.
+Health policy lives in `reference/monitoring.yml`.

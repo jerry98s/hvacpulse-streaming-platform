@@ -36,6 +36,7 @@ class Settings:
     schema: str | None = None
     checkpoint_root: str | None = None
     plant_config: Path = field(default=REPO_ROOT / "reference" / "mock_plant.json")
+    run_id: str | None = None
 
     @property
     def plant_silver_path(self) -> str:
@@ -181,6 +182,14 @@ class Settings:
     def gold_equipment_health_path(self) -> str:
         return self._delta_target("gold_equipment_health")
 
+    @property
+    def ops_stage_runs_path(self) -> str:
+        return self._delta_target("ops_pipeline_stage_runs")
+
+    @property
+    def ops_publications_path(self) -> str:
+        return self._delta_target("ops_dataset_publications")
+
     def checkpoint(self, name: str) -> str:
         """Checkpoint location. On Databricks this MUST point at reliable
         storage (ADLS/Unity Catalog volume), never local disk — set
@@ -211,4 +220,5 @@ def load_settings() -> Settings:
         schema=os.environ.get("HVACPULSE_SCHEMA"),
         checkpoint_root=os.environ.get("HVACPULSE_CHECKPOINT_ROOT"),
         plant_config=Path(os.environ.get("HVACPULSE_PLANT_CONFIG", str(REPO_ROOT / "reference/mock_plant.json"))),
+        run_id=os.environ.get("HVACPULSE_RUN_ID") or None,
     )

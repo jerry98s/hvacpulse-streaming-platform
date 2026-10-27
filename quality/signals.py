@@ -32,6 +32,7 @@ REFERENCE_CSV = Path(__file__).resolve().parents[1] / "reference" / "equipment_m
 @dataclass(frozen=True)
 class EquipmentLimits:
     device_id: str
+    site_id: str
     equipment_type: str
     rated_power_kw: float
     temp_min_c: float
@@ -48,6 +49,7 @@ def load_equipment_limits(csv_path: Path | str = REFERENCE_CSV) -> dict[str, Equ
         for row in csv.DictReader(fh):
             limits[row["device_id"]] = EquipmentLimits(
                 device_id=row["device_id"],
+                site_id=row["site_id"],
                 equipment_type=row["equipment_type"],
                 rated_power_kw=float(row["rated_power_kw"]),
                 temp_min_c=float(row["temp_min_c"]),

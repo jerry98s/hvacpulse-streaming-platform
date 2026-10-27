@@ -44,6 +44,7 @@ from pyspark.sql.functions import window
 from quality.signals import load_equipment_limits
 from streaming.config import Settings
 from streaming.config import load_settings
+from streaming.ops import StageRun
 from streaming.spark_session import create_spark
 
 CALCULATION_VERSION = "gold-v2"
@@ -221,13 +222,20 @@ def publish_gold(spark: SparkSession, metrics: DataFrame, settings: Settings) ->
 
 def run(settings: Settings) -> None:
     spark = create_spark("hvacpulse-gold-metrics", delta=True)
-    silver_current = settings.read_delta(spark, settings.silver_current_path)
-    intervals = {
-        device: limits.expected_report_interval_sec
-        for device, limits in load_equipment_limits(settings.known_devices_csv).items()
-    }
-    metrics = compute_window_metrics(silver_current, intervals)
-    publish_gold(spark, metrics, settings)
+    with StageRun(
+        spark,
+        settings,
+        "gold_metrics",
+        inputs=["silver_telemetry_current"],
+        outputs=["gold_hvac_metrics_history", "gold_hvac_metrics_current"],
+    ):
+        silver_current = settings.read_delta(spark, settings.silver_current_path)
+        intervals = {
+            device: limits.expected_report_interval_sec
+            for device, limits in load_equipment_limits(settings.known_devices_csv).items()
+        }
+        metrics = compute_window_metrics(silver_current, intervals)
+        publish_gold(spark, metrics, settings)
 
 
 def main(argv: list[str] | None = None) -> int:

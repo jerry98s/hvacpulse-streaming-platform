@@ -13,7 +13,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("up", "down", "topics", "simulate", "bronze", "silver", "gold",
                  "quality", "recommendations", "reconcile", "benchmark", "dashboard",
-                 "maintain", "semantic", "test", "verify", "all", "plant-all", "plant-cycle",
+                 "maintain", "semantic", "test", "verify", "health", "all", "plant-all", "plant-cycle",
                  "plant-silver", "features", "train", "control")]
     [string]$Task,
 
@@ -183,6 +183,14 @@ function Invoke-Verify {
     } finally { Pop-Location }
 }
 
+function Invoke-Health {
+    Push-Location $RepoRoot
+    try {
+        & $Python -m streaming.jobs.pipeline_health
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally { Pop-Location }
+}
+
 function Invoke-Test {
     Push-Location $RepoRoot
     try {
@@ -193,6 +201,12 @@ function Invoke-Test {
     } finally { Pop-Location }
 }
 
+# One run id per invocation groups its stages in ops_pipeline_stage_runs. Restore
+# the caller's value afterwards: $env: changes outlive the script in this session.
+$PreviousRunId = $env:HVACPULSE_RUN_ID
+$env:HVACPULSE_RUN_ID = "local-{0}-{1}" -f (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ"),
+    [guid]::NewGuid().ToString("N").Substring(0, 8)
+try {
 switch ($Task) {
     "plant-all" {
         Invoke-Up
@@ -230,6 +244,7 @@ switch ($Task) {
     "semantic"  { Invoke-Semantic }
     "test"     { Invoke-Test }
     "verify"   { Invoke-Verify }
+    "health"   { Invoke-Health }
     "all" {
         Invoke-Up
         Invoke-Topics
@@ -244,5 +259,9 @@ switch ($Task) {
         Invoke-Maintenance
         Invoke-Verify
         Invoke-Benchmark
+        Invoke-Health
     }
+}
+} finally {
+    $env:HVACPULSE_RUN_ID = $PreviousRunId
 }

@@ -5,7 +5,7 @@
 import sys
 from pathlib import Path
 
-for parameter in ("catalog", "schema", "source_path"):
+for parameter in ("catalog", "schema", "source_path", "run_id"):
     dbutils.widgets.text(parameter, "")
 
 source_path = dbutils.widgets.get("source_path")
@@ -23,5 +23,6 @@ settings = Settings(
     schema=schema,
     known_devices_csv=Path(source_path) / "reference" / "equipment_master.csv",
     checkpoint_root=ensure_uc_checkpoint_root(spark, catalog, schema),
+    run_id=dbutils.widgets.get("run_id") or None,
 )
 run(settings, once=True)

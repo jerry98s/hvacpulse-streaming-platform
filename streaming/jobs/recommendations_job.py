@@ -38,6 +38,7 @@ from quality import signals
 from streaming import recommendations as rec
 from streaming.config import Settings
 from streaming.config import load_settings
+from streaming.ops import StageRun
 from streaming.spark_session import create_spark
 
 WINDOW = "5 minutes"
@@ -259,9 +260,7 @@ def _revocations_for_restated_windows(
     return build_restatement_revocations(existing, restated, current_recommendations, now)
 
 
-def run(settings: Settings) -> None:
-    spark = create_spark("hvacpulse-recommendations", delta=True)
-    now = datetime.now(timezone.utc)
+def _evaluate_and_write(spark: SparkSession, settings: Settings, now: datetime) -> None:
     recommendations, revocations = evaluate_recommendations(spark, settings, now=now)
 
     if recommendations:
@@ -331,6 +330,18 @@ def run(settings: Settings) -> None:
             )
 
     print(f"recommendations evaluated: {len(recommendations)} new, {len(revocations)} revoked")
+
+
+def run(settings: Settings) -> None:
+    spark = create_spark("hvacpulse-recommendations", delta=True)
+    with StageRun(
+        spark,
+        settings,
+        "recommendations_job",
+        inputs=["silver_telemetry_current", "quarantine_events", "gold_hvac_metrics_current"],
+        outputs=["gold_recommendations", "recommendation_events"],
+    ):
+        _evaluate_and_write(spark, settings, datetime.now(timezone.utc))
 
 
 def main(argv: list[str] | None = None) -> int:

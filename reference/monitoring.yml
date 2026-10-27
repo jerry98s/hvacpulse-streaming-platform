@@ -1,0 +1,44 @@
+# Pipeline health policy, read by streaming/ops.py.
+# Check: python -m streaming.jobs.pipeline_health
+# Thresholds assume the five-minute bundle schedule. They are a starting policy,
+# not a measured SLA; tune them from ops_pipeline_stage_runs durations.
+version: 1
+
+# A stage whose last success is older than this is DELAYED.
+max_success_age_minutes: 15
+# A STARTED attempt with no outcome after this long is STUCK.
+max_stage_minutes: 30
+# Stage history the health check reads.
+lookback_hours: 24
+# Input rows of this stage show whether Bronze is still receiving data.
+idle_stage: silver_transform
+# This many consecutive successful idle_stage runs with zero input rows is IDLE.
+idle_runs: 3
+# gold_equipment_health counts an inconsistency as active only within this many
+# minutes of the device's latest reading.
+anomaly_window_minutes: 15
+
+# Stages each environment must run. required_tables must all be PUBLISHED by the
+# same successful attempt, or the stage is NOT_READY.
+profiles:
+  local:
+    - bronze_ingest
+    - silver_transform
+    - gold_metrics
+    - name: quality_metrics
+      required_tables:
+        [gold_data_quality_scorecard, gold_sensor_freshness, gold_compliance, gold_equipment_health]
+    - recommendations_job
+    - reconciliation
+    - semantic_layer
+  databricks:
+    - silver_transform
+    - plant_silver
+    - plant_features
+    - gold_metrics
+    - name: quality_metrics
+      required_tables:
+        [gold_data_quality_scorecard, gold_sensor_freshness, gold_compliance, gold_equipment_health]
+    - recommendations_job
+    - reconciliation
+    - semantic_layer

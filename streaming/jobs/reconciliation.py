@@ -25,6 +25,7 @@ from pyspark.sql.functions import to_date
 from streaming.config import Settings
 from streaming.config import load_settings
 from streaming.jobs.gold_metrics import RESTATED
+from streaming.ops import StageRun
 from streaming.spark_session import create_spark
 
 WATERMARK_INTERVAL = "interval 10 minutes"
@@ -108,8 +109,15 @@ def reconcile_restatements(spark: SparkSession, settings: Settings) -> int:
 
 def run(settings: Settings) -> None:
     spark = create_spark("hvacpulse-reconciliation", delta=True)
-    late_count = reconcile_late_corrections(spark, settings)
-    restated_count = reconcile_restatements(spark, settings)
+    with StageRun(
+        spark,
+        settings,
+        "reconciliation",
+        inputs=["silver_telemetry_history", "gold_hvac_metrics_history"],
+        outputs=["late_corrections", "metric_restatement_events"],
+    ):
+        late_count = reconcile_late_corrections(spark, settings)
+        restated_count = reconcile_restatements(spark, settings)
     print(f"late corrections tracked: {late_count}; restatement events: {restated_count}")
 
 

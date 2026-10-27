@@ -18,6 +18,7 @@ from plant.contracts import Plant
 from plant.learning import decide
 from plant.learning import fit_chronological
 from streaming.config import load_settings
+from streaming.ops import StageRun
 from streaming.plant_store import bounded_rows
 from streaming.plant_store import control_writer
 from streaming.plant_store import merge_rows
@@ -59,6 +60,17 @@ def feature_source(spark, settings, plant, now, *, version=None):
 def train_model(spark, settings, *, now=None, days=30, epochs=15):
     if not 2 <= days <= 365:
         raise ValueError("Training window must be between 2 and 365 days")
+    with StageRun(
+        spark,
+        settings,
+        "plant_train",
+        inputs=["gold_plant_features", "quarantine_plant_snapshots"],
+        outputs=["plant_model_registry"],
+    ):
+        return _train_model(spark, settings, now=now, days=days, epochs=epochs)
+
+
+def _train_model(spark, settings, *, now, days, epochs):
     now = now or datetime.now(timezone.utc)
     plant = Plant.load(settings.plant_config)
     version = settings.delta_table(spark, settings.plant_features_path).history(1).first().version
@@ -101,7 +113,16 @@ def train_model(spark, settings, *, now=None, days=30, epochs=15):
 def predict_and_control(
     spark, settings, *, now=None, simulate=False, manual_override=False, interlock_ok=True
 ):
-    with control_writer(settings, simulate=simulate):
+    with (
+        control_writer(settings, simulate=simulate),
+        StageRun(
+            spark,
+            settings,
+            "plant_control",
+            inputs=["gold_plant_features", "plant_model_registry", "quarantine_plant_snapshots"],
+            outputs=["gold_plant_predictions", "gold_plant_control_decisions"],
+        ),
+    ):
         return _predict_and_control(
             spark,
             settings,

@@ -10,6 +10,7 @@ pytestmark = pytest.mark.unit
 
 LIMITS = signals.EquipmentLimits(
     device_id="ahu-001",
+    site_id="factory-kl-01",
     equipment_type="AHU",
     rated_power_kw=25.0,
     temp_min_c=18.0,

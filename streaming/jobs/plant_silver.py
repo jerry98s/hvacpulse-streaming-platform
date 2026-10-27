@@ -8,6 +8,7 @@ from pyspark.sql import functions as F
 
 from plant.contracts import Plant
 from streaming.config import load_settings
+from streaming.ops import StageRun
 from streaming.plant_store import merge_rows
 from streaming.plant_transforms import normalized_frame
 from streaming.spark_session import create_spark
@@ -68,7 +69,12 @@ def run(settings, *, once: bool = True):
     )
     if once:
         writer = writer.trigger(availableNow=True)
-    writer.start().awaitTermination()
+    with StageRun(
+        spark, settings, "plant_silver", outputs=["silver_plant_snapshots", "quarantine_plant_snapshots"]
+    ) as stage:
+        query = writer.start()
+        query.awaitTermination()
+        stage.record_stream(query)
 
 
 def main(argv=None):

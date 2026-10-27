@@ -5,7 +5,7 @@
 import sys
 from pathlib import Path
 
-for parameter in ("catalog", "schema", "source_path"):
+for parameter in ("catalog", "schema", "source_path", "run_id"):
     dbutils.widgets.text(parameter, "")
 
 source_path = dbutils.widgets.get("source_path")
@@ -19,5 +19,6 @@ settings = Settings(
     catalog=dbutils.widgets.get("catalog"),
     schema=dbutils.widgets.get("schema"),
     known_devices_csv=Path(source_path) / "reference" / "equipment_master.csv",
+    run_id=dbutils.widgets.get("run_id") or None,
 )
 run(settings)

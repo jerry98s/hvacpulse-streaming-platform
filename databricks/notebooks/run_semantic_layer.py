@@ -4,7 +4,7 @@
 # Thin wrapper: apply reference/semantic_model.yml to Unity Catalog.
 import sys
 
-for parameter in ("catalog", "schema", "source_path"):
+for parameter in ("catalog", "schema", "source_path", "run_id"):
     dbutils.widgets.text(parameter, "")
 
 source_path = dbutils.widgets.get("source_path")
@@ -14,4 +14,10 @@ if source_path not in sys.path:
 from streaming.config import Settings
 from streaming.jobs.semantic_layer import run
 
-run(Settings(catalog=dbutils.widgets.get("catalog"), schema=dbutils.widgets.get("schema")))
+run(
+    Settings(
+        catalog=dbutils.widgets.get("catalog"),
+        schema=dbutils.widgets.get("schema"),
+        run_id=dbutils.widgets.get("run_id") or None,
+    )
+)

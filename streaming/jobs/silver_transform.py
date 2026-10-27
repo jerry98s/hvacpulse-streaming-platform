@@ -39,6 +39,7 @@ from pyspark.sql.window import Window
 from quality.rules import IDEMPOTENCY_CONFLICT
 from streaming.config import Settings
 from streaming.config import load_settings
+from streaming.ops import StageRun
 from streaming.plant_transforms import plant_records
 from streaming.spark_session import create_spark
 from streaming.transforms import flatten_parsed
@@ -224,8 +225,16 @@ def run(settings: Settings, *, once: bool = True) -> None:
     )
     if once:
         writer = writer.trigger(availableNow=True)
-    query = writer.start()
-    query.awaitTermination()
+    # Bronze is a Lakeflow table in the cloud; the stream's end offsets record its version.
+    with StageRun(
+        spark,
+        settings,
+        "silver_transform",
+        outputs=["silver_telemetry_history", "silver_telemetry_current", "quarantine_events"],
+    ) as stage:
+        query = writer.start()
+        query.awaitTermination()
+        stage.record_stream(query)
 
 
 def main(argv: list[str] | None = None) -> int:

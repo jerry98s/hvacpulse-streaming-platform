@@ -17,6 +17,7 @@ from pyspark.sql import SparkSession
 
 from streaming.config import Settings
 from streaming.config import load_settings
+from streaming.ops import StageRun
 from streaming.semantic import SemanticModel
 from streaming.semantic import load_model
 from streaming.semantic import metric_view_ddl
@@ -61,7 +62,8 @@ def apply_semantic_model(spark: SparkSession, settings: Settings, model: Semanti
 
 def run(settings: Settings) -> None:
     spark = create_spark("hvacpulse-semantic-layer", delta=True)
-    apply_semantic_model(spark, settings, load_model())
+    with StageRun(spark, settings, "semantic_layer"):
+        apply_semantic_model(spark, settings, load_model())
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 
 from pyspark.sql import SparkSession
+from pyspark.sql import Window
 from pyspark.sql.functions import avg
 from pyspark.sql.functions import broadcast
 from pyspark.sql.functions import coalesce
@@ -18,6 +19,7 @@ from pyspark.sql.functions import col
 from pyspark.sql.functions import count
 from pyspark.sql.functions import countDistinct
 from pyspark.sql.functions import current_timestamp
+from pyspark.sql.functions import expr
 from pyspark.sql.functions import lit
 from pyspark.sql.functions import max as max_
 from pyspark.sql.functions import round as round_
@@ -28,6 +30,8 @@ from pyspark.sql.functions import window
 from quality.signals import load_equipment_limits
 from streaming.config import Settings
 from streaming.config import load_settings
+from streaming.ops import StageRun
+from streaming.ops import load_monitoring
 from streaming.spark_session import create_spark
 
 WINDOW = "5 minutes"
@@ -39,6 +43,7 @@ def _limits_df(spark: SparkSession, settings: Settings):
     rows = [
         {
             "device_id": limits.device_id,
+            "site_id": limits.site_id,
             "rated_power_kw": limits.rated_power_kw,
             "temp_min_c": limits.temp_min_c,
             "temp_max_c": limits.temp_max_c,
@@ -148,21 +153,28 @@ def build_dq_scorecard(spark: SparkSession, settings: Settings):
 
 
 def build_sensor_freshness(spark: SparkSession, settings: Settings):
-    """Per device: last observed event vs expected reporting interval."""
-    silver = settings.read_delta(spark, settings.silver_current_path)
-    limits = _limits_df(spark, settings)
-    return (
-        silver.groupBy("site_id", "device_id")
+    """Per equipment-master device: last observed event vs expected reporting interval.
+
+    The inventory comes from the equipment master, so a device that never
+    reported still gets a row, with a null last_event_time and is_stale true.
+    """
+    observed = (
+        settings.read_delta(spark, settings.silver_current_path)
+        .groupBy("device_id")
         .agg(max_("event_time").alias("last_event_time"), count("*").alias("total_events"))
-        # Reference limits are tiny (a few KB): broadcast bypasses the shuffle.
-        .join(broadcast(limits), "device_id", "left")
+    )
+    return (
+        _limits_df(spark, settings)
+        .join(observed, "device_id", "left")
+        .fillna(0, subset=["total_events"])
         .withColumn(
             "age_seconds",
             (current_timestamp().cast("long") - col("last_event_time").cast("long")),
         )
         .withColumn(
             "is_stale",
-            col("age_seconds") > col("expected_report_interval_sec") * lit(3.0),
+            col("last_event_time").isNull()
+            | (col("age_seconds") > col("expected_report_interval_sec") * lit(3.0)),
         )
         .withColumn("computed_at", current_timestamp())
     )
@@ -171,7 +183,8 @@ def build_sensor_freshness(spark: SparkSession, settings: Settings):
 def build_compliance(spark: SparkSession, settings: Settings):
     """Per device/5-minute window: time outside facility environmental limits."""
     silver = settings.read_delta(spark, settings.silver_current_path)
-    limits = _limits_df(spark, settings)
+    limits = _limits_df(spark, settings).drop("site_id")
+    # Reference limits are tiny (a few KB): broadcast bypasses the shuffle.
     enriched = silver.join(broadcast(limits), "device_id", "left")
     flagged = enriched.withColumn(
         "temp_violation",
@@ -207,11 +220,20 @@ def build_compliance(spark: SparkSession, settings: Settings):
     )
 
 
-def build_equipment_health(spark: SparkSession, settings: Settings):
-    """Per device: cross-field inconsistency counts over the current state."""
+def build_equipment_health(spark: SparkSession, settings: Settings, *, active_window_minutes: int):
+    """Per device: cross-field inconsistency counts over the current state.
+
+    The *_events counts cover all current readings. has_active_anomaly only
+    looks at readings within active_window_minutes of the device's latest
+    reading, so an old incident does not stay active forever. The window is
+    anchored on the device's own clock, not the wall clock, so replays and
+    simulator time behave the same way.
+    """
     silver = settings.read_delta(spark, settings.silver_current_path)
     rated = _limits_df(spark, settings).select("device_id", "rated_power_kw")
-    enriched = silver.join(broadcast(rated), "device_id", "left")
+    enriched = silver.join(broadcast(rated), "device_id", "left").withColumn(
+        "_device_last_event_time", max_("event_time").over(Window.partitionBy("site_id", "device_id"))
+    )
     return (
         enriched.withColumn(
             "not_running_high_power",
@@ -227,9 +249,23 @@ def build_equipment_health(spark: SparkSession, settings: Settings):
             (col("chilled_water_valve_pct") == 0.0)
             & (col("return_air_temp_c") - col("supply_air_temp_c") > lit(2.0)),
         )
+        .withColumn(
+            "_active_inconsistency",
+            (
+                col("event_time")
+                >= col("_device_last_event_time") - expr(f"INTERVAL {int(active_window_minutes)} MINUTES")
+            )
+            & (
+                col("not_running_high_power")
+                | col("fan_stopped_high_airflow")
+                | col("valve_closed_high_cooling")
+            ),
+        )
         .groupBy("site_id", "device_id")
         .agg(
             count("*").alias("events"),
+            max_("event_time").alias("last_event_time"),
+            sum_(when(col("_active_inconsistency"), 1).otherwise(0)).alias("active_anomaly_events"),
             sum_(when(col("not_running_high_power"), 1).otherwise(0)).alias(
                 "not_running_high_power_events"
             ),
@@ -240,27 +276,34 @@ def build_equipment_health(spark: SparkSession, settings: Settings):
                 "valve_closed_high_cooling_events"
             ),
         )
-        .withColumn(
-            "has_active_anomaly",
-            (col("not_running_high_power_events") > 0)
-            | (col("fan_stopped_high_airflow_events") > 0)
-            | (col("valve_closed_high_cooling_events") > 0),
-        )
+        .withColumn("has_active_anomaly", col("active_anomaly_events") > 0)
         .withColumn("computed_at", current_timestamp())
     )
 
 
 def run(settings: Settings) -> None:
     spark = create_spark("hvacpulse-quality-metrics", delta=True)
+    monitoring = load_monitoring()
     outputs = {
-        settings.gold_dq_scorecard_path: build_dq_scorecard(spark, settings),
-        settings.gold_sensor_freshness_path: build_sensor_freshness(spark, settings),
-        settings.gold_compliance_path: build_compliance(spark, settings),
-        settings.gold_equipment_health_path: build_equipment_health(spark, settings),
+        "gold_data_quality_scorecard": build_dq_scorecard(spark, settings),
+        "gold_sensor_freshness": build_sensor_freshness(spark, settings),
+        "gold_compliance": build_compliance(spark, settings),
+        "gold_equipment_health": build_equipment_health(
+            spark, settings, active_window_minutes=monitoring.anomaly_window_minutes
+        ),
     }
-    for path, df in outputs.items():
-        settings.write_delta(df, path, mode="overwrite", overwrite_schema=True)
-        print(f"wrote {path}")
+    # Each overwrite is atomic, but the four are not: ops_dataset_publications
+    # records which ones committed, and the health check needs all four.
+    with StageRun(
+        spark,
+        settings,
+        "quality_metrics",
+        inputs=["silver_telemetry_history", "silver_telemetry_current", "quarantine_events"],
+        outputs=list(outputs),
+    ):
+        for name, df in outputs.items():
+            settings.write_delta(df, settings.table_target(name), mode="overwrite", overwrite_schema=True)
+            print(f"wrote {name}")
 
 
 def main(argv: list[str] | None = None) -> int:

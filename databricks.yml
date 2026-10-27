@@ -14,6 +14,8 @@ variables:
     description: Full Event Hubs Kafka bootstrap host and port
   eventhubs_connection_secret:
     description: Databricks secret scope/key holding the Event Hubs connection string
+  alert_email:
+    description: Address notified when a job fails, runs too long, or the health check finds an unhealthy stage
 
 workspace:
   root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
@@ -54,6 +56,16 @@ resources:
     hvacpulse_batch:
       name: ${bundle.name}-batch-${bundle.target}
       max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - ${var.alert_email}
+        on_duration_warning_threshold_exceeded:
+          - ${var.alert_email}
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 900
       tasks:
         - task_key: refresh_pipeline
           pipeline_task:
@@ -67,6 +79,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
         - task_key: plant_features_and_shadow_control
           depends_on:
             - task_key: refresh_pipeline
@@ -76,6 +89,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
               action: refresh
         - task_key: gold_metrics
           depends_on:
@@ -86,6 +100,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
         - task_key: quality_metrics
           depends_on:
             - task_key: gold_metrics
@@ -95,6 +110,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
         - task_key: recommendations
           depends_on:
             - task_key: quality_metrics
@@ -104,6 +120,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
         - task_key: reconciliation
           depends_on:
             - task_key: recommendations
@@ -113,6 +130,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
         - task_key: semantic_layer
           depends_on:
             - task_key: reconciliation
@@ -123,6 +141,26 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               source_path: ${workspace.file_path}
+              run_id: "{{job.run_id}}"
       schedule:
         quartz_cron_expression: 0 */5 * * * ?
+        timezone_id: UTC
+
+    # Separate job: it still runs, and alerts, when hvacpulse_batch stops or hangs.
+    hvacpulse_health:
+      name: ${bundle.name}-health-${bundle.target}
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - ${var.alert_email}
+      tasks:
+        - task_key: pipeline_health
+          notebook_task:
+            notebook_path: ./databricks/notebooks/run_pipeline_health.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_path: ${workspace.file_path}
+      schedule:
+        quartz_cron_expression: 0 */10 * * * ?
         timezone_id: UTC

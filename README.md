@@ -7,7 +7,7 @@
 | Signal | What to check |
 |---|---|
 | **CI** | The badge above. Every push to `main` runs Ruff, unit tests, Spark and Delta suites, dashboard render tests, a live Kafka-to-mock-control integration test, both Avro compatibility checks, and Terraform fmt/validate. |
-| **Tests** | `uv run pytest tests/unit -m unit` → **142 passed** locally; Spark, Delta, dashboard and Kafka suites run as separate CI jobs. |
+| **Tests** | `uv run pytest tests/unit -m unit` → **159 passed** locally; Spark, Delta, dashboard and Kafka suites run as separate CI jobs. |
 | **Idempotent writes** | `tests/delta/test_job_idempotency.py` retries and replays the quarantine, Gold history and restatement MERGEs and checks no row is duplicated. |
 | **Restatement** | Gold `OPEN → FINAL → RESTATED` with `metric_version` + `_content_hash`; a corrected window keeps prior versions in `gold_hvac_metrics_history`. |
 | **Safety gates** | A mock control decision is `BLOCKED` when any gate fails (e.g. `reason=MODEL_NOT_APPROVED`, `plan=null`); nothing actuates equipment. |
@@ -278,7 +278,7 @@ After changing the model, regenerate the dictionary below with
 | `gold_hvac_metrics_current` | gold | one row per site_id, device_id and one-minute window_start | `site_id`, `device_id`, `window_start` | Latest published one-minute metrics per device. Customer reporting uses FINAL and RESTATED windows. |
 | `gold_hvac_metrics_history` | gold | one row per site_id, device_id, window_start and metric_version | `site_id`, `device_id`, `window_start`, `metric_version` | Every published version of every one-minute metric window, append-only, so past reports can be reproduced. |
 | `gold_data_quality_scorecard` | gold | one row per site_id, device_id and five-minute window_start (ingest time) | `site_id`, `device_id`, `window_start` | Data quality per device and five-minute ingest window, valid versus quarantined records and null rates. Counts are post-deduplication; raw Bronze may have more records. |
-| `gold_sensor_freshness` | gold | one row per device_id | `device_id` | Staleness of each device against its expected report interval. |
+| `gold_sensor_freshness` | gold | one row per device_id in reference/equipment_master.csv | `device_id` | Staleness of every equipment-master device against its expected report interval; a device that never reported is stale. |
 | `gold_compliance` | gold | one row per site_id, device_id and five-minute window_start (event time) | `site_id`, `device_id`, `window_start` | Readings outside facility temperature and humidity limits per device and five-minute event window. |
 | `gold_equipment_health` | gold | one row per site_id and device_id | `site_id`, `device_id` | Cross-field inconsistencies per device over current Silver; valid readings that cannot all be true together. |
 | `gold_recommendations` | gold | one row per recommendation_id | `recommendation_id` | Advisory optimisation suggestions that passed every safety gate. Never a control action. |
@@ -291,6 +291,8 @@ After changing the model, regenerate the dictionary below with
 | `plant_model_registry` | ml | one row per model_id | `model_id` | Trained mock plant models with gate results; only approved models may forecast. |
 | `gold_plant_predictions` | gold | one row per prediction_id | `prediction_id` | Cooling-load estimates from approved models. |
 | `gold_plant_control_decisions` | gold | one row per decision_id | `decision_id` | Constrained control decisions for the mock plant; shadow by default, never physical actuation. |
+| `ops_pipeline_stage_runs` | ops | one row per run_id, stage_name, attempt and status | `run_id`, `stage_name`, `attempt`, `status` | Append-only execution log; every stage attempt writes STARTED, then SUCCEEDED or FAILED. |
+| `ops_dataset_publications` | ops | one row per run_id, stage_name, attempt and table_name | `run_id`, `stage_name`, `attempt`, `table_name` | Append-only record of every table version a stage committed, with its publication checks. |
 
 **Metric views** (Databricks `WITH METRICS`; query with `MEASURE(<name>)`):
 
@@ -299,7 +301,7 @@ After changing the model, regenerate the dictionary below with
 | `mv_hvac_energy` | `gold_hvac_metrics_current` | `site_id`, `device_id`, `window_status`, `window_date`, `window_hour` | `energy_kwh`: Energy in kWh including provisional OPEN windows.<br>`reported_energy_kwh`: Energy in kWh from FINAL and RESTATED windows only; the customer reporting figure.<br>`readings`: Valid readings aggregated.<br>`avg_power_kw`: Reading-weighted mean power in kilowatts.<br>`peak_power_kw`: Highest instantaneous power in kilowatts.<br>`restated_windows`: Windows whose FINAL value was later corrected. |
 | `mv_data_quality` | `gold_data_quality_scorecard` | `site_id`, `device_id`, `dq_status`, `window_date` | `received_events`: Records received.<br>`valid_events`: Records that reached Silver.<br>`quarantined_events`: Records quarantined.<br>`quality_rate`: Share of received records that were valid.<br>`failing_windows`: Five-minute windows with quality_score below 0.9. |
 | `mv_compliance` | `gold_compliance` | `site_id`, `device_id`, `window_date` | `violation_minutes`: Minutes outside limits.<br>`temp_violation_events`: Readings outside temperature limits.<br>`humidity_violation_events`: Readings outside humidity limits.<br>`readings`: Readings evaluated. |
-| `mv_sensor_freshness` | `gold_sensor_freshness` | `site_id`, `commissioning_status` | `devices`: Devices observed.<br>`stale_devices`: Devices silent for over three report intervals.<br>`max_age_seconds`: Longest time since a device last reported. |
+| `mv_sensor_freshness` | `gold_sensor_freshness` | `site_id`, `commissioning_status` | `devices`: Devices in the equipment master.<br>`stale_devices`: Devices silent for over three report intervals.<br>`max_age_seconds`: Longest time since a device last reported. |
 
 Column descriptions for every table live in `reference/semantic_model.yml` and are applied
 to Unity Catalog as column comments.

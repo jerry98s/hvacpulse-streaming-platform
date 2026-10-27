@@ -18,7 +18,7 @@ MODEL_PATH = REPO_ROOT / "reference" / "semantic_model.yml"
 README_PATH = REPO_ROOT / "README.md"
 DICTIONARY_BEGIN = "<!-- BEGIN DATA DICTIONARY (generated from reference/semantic_model.yml) -->"
 DICTIONARY_END = "<!-- END DATA DICTIONARY -->"
-LAYERS = ("bronze", "silver", "quarantine", "gold", "audit", "ml")
+LAYERS = ("bronze", "silver", "quarantine", "gold", "audit", "ml", "ops")
 METRIC_VIEW_SPEC_VERSION = "1.1"
 
 _SQL_WORDS = {

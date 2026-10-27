@@ -5,7 +5,7 @@
 import sys
 from pathlib import Path
 
-for parameter in ("catalog", "schema", "source_path"):
+for parameter in ("catalog", "schema", "source_path", "run_id"):
     dbutils.widgets.text(parameter, "")
 dbutils.widgets.dropdown("action", "refresh", ["refresh", "train"])
 source_path = dbutils.widgets.get("source_path")
@@ -26,6 +26,7 @@ settings = Settings(
     schema=schema,
     plant_config=Path(source_path) / "reference/mock_plant.json",
     checkpoint_root=ensure_uc_checkpoint_root(spark, catalog, schema),
+    run_id=dbutils.widgets.get("run_id") or None,
 )
 if dbutils.widgets.get("action") == "train":
     train_model(spark, settings)

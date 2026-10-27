@@ -30,6 +30,8 @@ MAINTAINED_TABLES = (
     "gold_recommendations",
     "late_corrections",
     "metric_restatement_events",
+    "ops_pipeline_stage_runs",
+    "ops_dataset_publications",
 )
 
 
