@@ -217,7 +217,7 @@ def test_health_check_detects_idle_stage_with_zero_input_runs(spark, tmp_path):
     settings = _settings(tmp_path)
     monitoring = ops.load_monitoring()
 
-    for run_num in range(monitoring.idle_runs):
+    for _ in range(monitoring.idle_runs):
         with ops.StageRun(spark, settings, monitoring.idle_stage) as stage:
             stage.input_rows = 0
 
@@ -232,7 +232,7 @@ def test_health_check_clears_idle_when_new_data_arrives(spark, tmp_path):
     settings = _settings(tmp_path, run_id="run-1")
     monitoring = ops.load_monitoring()
 
-    for run_num in range(monitoring.idle_runs):
+    for _ in range(monitoring.idle_runs):
         with ops.StageRun(spark, settings, monitoring.idle_stage) as stage:
             stage.input_rows = 0
 
@@ -249,7 +249,7 @@ def test_health_check_detects_stuck_stage(spark, tmp_path):
     settings = _settings(tmp_path)
     monitoring = ops.load_monitoring()
 
-    with ops.StageRun(spark, settings, "gold_metrics") as stage:
+    with ops.StageRun(spark, settings, "gold_metrics"):
         now_during_run = time.time() + (monitoring.max_stage_minutes + 1) * 60
         results_during = check_health(spark, settings, now=now_during_run)
 
