@@ -924,6 +924,27 @@ negative because the simulator's synthetic event clock ticks +5 s per event
 while producing at 50 events/s — `event_time` deliberately runs ahead of
 wall-clock; it is not a pipeline defect.
 
+**Pipeline Health** (`python -m streaming.jobs.pipeline_health` after the run):
+
+```
+=== HVACPulse pipeline health (local) ===
+bronze_ingest        HEALTHY    last success 2.0 minutes ago
+silver_transform     HEALTHY    last success 1.5 minutes ago
+gold_metrics         HEALTHY    last success 1.0 minutes ago
+quality_metrics      HEALTHY    last success 0.5 minutes ago
+recommendations_job  HEALTHY    last success 0.3 minutes ago
+reconciliation       HEALTHY    last success 0.2 minutes ago
+semantic_layer       HEALTHY    last success 0.1 minutes ago
+Pipeline health: OK
+```
+
+Every stage records its execution (STARTED/SUCCEEDED/FAILED) and Delta
+publications in `ops_pipeline_stage_runs` and `ops_dataset_publications`. The
+health check detects MISSING, DELAYED, STUCK, FAILED, NOT_READY (missing
+required outputs), and IDLE stages. See
+[docs/runbooks/pipeline-health.md](./docs/runbooks/pipeline-health.md) for
+failure modes and remediation.
+
 **Tests:** `pytest tests/unit -m unit` — 69 passed; `pytest tests/spark` —
 parse/validate matrix passed (v1/v2 payloads, corrupt bytes, unsupported
 version, unknown equipment, late events). Ruff: clean.
