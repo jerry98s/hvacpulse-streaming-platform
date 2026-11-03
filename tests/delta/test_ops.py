@@ -165,3 +165,110 @@ def test_active_anomaly_only_counts_the_device_recent_window(spark, tmp_path):
     recent = rows["ahu-002"]
     assert (recent.active_anomaly_events, recent.has_active_anomaly) == (1, True)
     assert recent.last_event_time == latest
+
+
+def test_health_check_detects_missing_stage(spark, tmp_path):
+    """Pipeline health reports MISSING when no runs exist for a stage."""
+    settings = _settings(tmp_path)
+    with ops.StageRun(spark, settings, "gold_metrics"):
+        pass
+
+    results = {r.stage_name: r for r in check_health(spark, settings)}
+    assert results["gold_metrics"].status == ops.HEALTHY
+    assert results["silver_transform"].status == ops.MISSING
+    assert "no runs in the last" in results["silver_transform"].detail
+
+
+def test_health_check_detects_not_ready_when_required_table_unpublished(spark, tmp_path):
+    """Pipeline health reports NOT_READY when a stage succeeds but doesn't publish required tables."""
+    settings = _settings(tmp_path)
+    monitoring = ops.load_monitoring()
+    qm_policy = next(s for s in monitoring.profiles[ops.profile_for(settings)] if s.name == "quality_metrics")
+
+    with ops.StageRun(spark, settings, "quality_metrics", outputs=[qm_policy.required_tables[0]]):
+        path = settings.table_target(qm_policy.required_tables[0])
+        settings.write_delta(
+            spark.createDataFrame(
+                [("site-1", "dev-1", datetime(2026, 8, 26, 10, 0), datetime(2026, 8, 26, 10, 5), "2026-08-26", 10, 2, 12, 1, 0, 0.0, 0.0, 0.0, 0.833, "PASS")],
+                "site_id string, device_id string, window_start timestamp, window_end timestamp, window_date string, valid_events int, quarantined_events int, received_events int, distinct_error_codes int, idempotency_conflicts int, null_zone_temp_rate double, null_power_rate double, null_humidity_rate double, quality_score double, dq_status string",
+            ),
+            path,
+        )
+
+    results = {r.stage_name: r for r in check_health(spark, settings)}
+    qm = results["quality_metrics"]
+    assert qm.status == ops.NOT_READY
+    assert "not published" in qm.detail
+
+
+def test_health_check_reports_healthy_when_all_required_tables_published_for_simple_stage(spark, tmp_path):
+    """Pipeline health reports HEALTHY when a simple stage publishes all required tables."""
+    settings = _settings(tmp_path)
+
+    with ops.StageRun(spark, settings, "reconciliation", outputs=["late_corrections"]):
+        settings.write_delta(_late_corrections(spark), settings.late_corrections_path)
+
+    results = {r.stage_name: r for r in check_health(spark, settings)}
+    assert results["reconciliation"].status == ops.HEALTHY
+
+
+def test_health_check_detects_idle_stage_with_zero_input_runs(spark, tmp_path):
+    """Pipeline health reports IDLE when the idle_stage has consecutive zero-input runs."""
+    settings = _settings(tmp_path)
+    monitoring = ops.load_monitoring()
+
+    for _ in range(monitoring.idle_runs):
+        with ops.StageRun(spark, settings, monitoring.idle_stage) as stage:
+            stage.input_rows = 0
+
+    results = {r.stage_name: r for r in check_health(spark, settings)}
+    idle_result = results[monitoring.idle_stage]
+    assert idle_result.status == ops.IDLE
+    assert "read no new rows" in idle_result.detail
+
+
+def test_health_check_clears_idle_when_new_data_arrives(spark, tmp_path):
+    """Pipeline health reports HEALTHY when the idle_stage processes new data after being idle."""
+    settings = _settings(tmp_path, run_id="run-1")
+    monitoring = ops.load_monitoring()
+
+    for _ in range(monitoring.idle_runs):
+        with ops.StageRun(spark, settings, monitoring.idle_stage) as stage:
+            stage.input_rows = 0
+
+    settings2 = _settings(tmp_path, run_id="run-2")
+    with ops.StageRun(spark, settings2, monitoring.idle_stage) as stage:
+        stage.input_rows = 100
+
+    results = {r.stage_name: r for r in check_health(spark, settings2)}
+    assert results[monitoring.idle_stage].status == ops.HEALTHY
+
+
+def test_health_check_detects_stuck_stage(spark, tmp_path):
+    """Pipeline health reports STUCK when a stage starts but doesn't finish within max_stage_minutes."""
+    settings = _settings(tmp_path)
+    monitoring = ops.load_monitoring()
+
+    with ops.StageRun(spark, settings, "gold_metrics"):
+        now_during_run = time.time() + (monitoring.max_stage_minutes + 1) * 60
+        results_during = check_health(spark, settings, now=now_during_run)
+
+    stuck_result = {r.stage_name: r for r in results_during}["gold_metrics"]
+    assert stuck_result.status == ops.STUCK
+    assert "started" in stuck_result.detail and "no outcome" in stuck_result.detail
+
+
+def test_pipeline_health_job_returns_nonzero_when_critical_failures_exist(spark, tmp_path):
+    """The pipeline_health job returns exit code 1 when any stage is in a critical state."""
+    from streaming.jobs.pipeline_health import main
+
+    settings = _settings(tmp_path)
+
+    with (
+        pytest.raises(ValueError, match="simulated failure"),
+        ops.StageRun(spark, settings, "gold_metrics"),
+    ):
+        raise ValueError("simulated failure")
+
+    exit_code = main([])
+    assert exit_code == 1
